@@ -184,6 +184,40 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 		break
 	}
 
+	// Depth pass. The breadth pass above gives every agent it can reach ONE
+	// line (its activity) so the tree says what everything is doing. §3.3 also
+	// puts up to max_calls_shown tool calls under an expanded agent, and rows
+	// left over after breadth are best spent on that history — most-important
+	// agent first, and never so much that the tree starts scrolling.
+	for _, a := range autoExpandOrder(agents) {
+		if fixed+count(blocks) >= avail {
+			break
+		}
+		if !expanded[a.ID] {
+			continue
+		}
+		if c, ok := calls[a.ID]; !ok || c >= callsShown {
+			continue // already drawing its full history
+		}
+		grew := false
+		for _, want := range callDepths(callsShown) {
+			if want <= calls[a.ID] {
+				continue
+			}
+			prev := calls[a.ID]
+			calls[a.ID] = want
+			nb := build(callsShown, expanded, noRoom)
+			if fixed+count(nb) <= avail {
+				blocks, grew = nb, true
+				break
+			}
+			calls[a.ID] = prev
+		}
+		if !grew {
+			break // nothing fits for this agent, so nothing will for the rest
+		}
+	}
+
 	res := treeResult{}
 	emit := func(b block) {
 		for _, ln := range b.lines {
@@ -797,5 +831,17 @@ func autoExpandOrder(agents []state.Agent) []state.Agent {
 	}
 	out := append([]state.Agent(nil), agents...)
 	sort.SliceStable(out, func(i, j int) bool { return rank(out[i]) < rank(out[j]) })
+	return out
+}
+
+// callDepths is the ladder the depth pass tries, deepest first: give an agent
+// its whole history if the pane can hold it, else a couple of calls, else one.
+func callDepths(max int) []int {
+	out := make([]int, 0, 3)
+	for _, n := range []int{max, 2, 1} {
+		if n > 0 && n <= max && (len(out) == 0 || n < out[len(out)-1]) {
+			out = append(out, n)
+		}
+	}
 	return out
 }
