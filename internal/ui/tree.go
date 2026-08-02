@@ -518,8 +518,16 @@ func agentBlock(w state.World, v *UIState, a state.Agent, last, expanded bool,
 		return b
 	}
 
-	// Line 2 — only when the slug is lossy (§3.16): the full description.
-	if !a.Teammate && v.Slugs != nil && v.Slugs.Lossy(a.ID) && a.Name != "" {
+	// The full description used to sit here whenever the slug was lossy
+	// (§3.16). In practice the slug is DERIVED from the description, so the
+	// two lines read as the same sentence twice — "summarize-spec…" above
+	// "Summarize SPEC colour rules" — and every agent cost two rows to say
+	// one thing. The description lives in the inspector (PART 4), which is
+	// where §3.16 always required it; the row spends its second line on what
+	// the agent is actually DOING instead. The selected row is the exception:
+	// there the user has asked for this agent specifically, and the untruncated
+	// name is the cheapest way to resolve a "…".
+	if a.ID == v.SelID && !a.Teammate && v.Slugs != nil && v.Slugs.Lossy(a.ID) && a.Name != "" {
 		b.lines = append(b.lines, truncSegs(line(
 			seg{contPre, pal.Struct}, seg{a.Name, pal.Settled}), width))
 	}

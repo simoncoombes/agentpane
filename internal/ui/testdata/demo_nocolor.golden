@@ -21,16 +21,16 @@ no call open · silent 2m50s
 [2m│      │ [0m[1m⚑ permission request[0m[1m  52s[0m[2m  +3 more[0m
 [2m├─╮[0m
 [2m│ ╰[0m[1m⚑[0m[1m typecheck-works…[0m                             [1m·······[0m[2m 0.0k/s[0m
-[2m│    [0m[2mTypecheck the workspace packages[0m
 [2m│    [0m[2m⤷ [0m[1mno call open · silent 2m50s[0m          [2m▪▪▫·[0m[2m first edit[0m[2m  33k[0m
 [2m├─╮[0m
 [2m│ ╰[0m● run-auth-tests                              ◐ in Bash 3m12s
-[2m│    [0m[2mRun the auth test suite in watch mode[0m
-[2m│    [0m[2m⤷ [0mkeep the auth suite hot in watch mode           [2m▪▫··[0m[2m  38k[0m
+[2m│    [0m[2m⤷ [0mBash pnpm test --watch  ✓ verified   [2m▪▫··[0m[2m first tool[0m[2m  38k[0m
 [2m├─╮[0m
 [2m│ ╰[0m● audit-users-schema                           ··▆··▇·[2m 0.1k/s[0m
+[2m│    [0m[2m⤷ [0mGrep "createUser" src/**             [2m▪▪▫·[0m[2m first edit[0m[2m  52k[0m
 [2m├─╮[0m
 [2m│ ╰[0m● write-email-index                            ···▇··▄[2m 0.3k/s[0m
+[2m│    [0m[2m⤷ [0mEdit db/migrations/0042.sql          [2m▪▪▫·[0m[2m first edit[0m[2m  86k[0m
 [2m├─╮[0m
 [2m│ ╰[0m[2m○[0m[2m document-constr…[0m[2m  queued[0m                                   
 [2m├─╮[0m

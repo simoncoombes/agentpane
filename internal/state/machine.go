@@ -1382,13 +1382,18 @@ func isEditTool(tool string) bool {
 	return false
 }
 
+// setActivity records what an agent is doing. The TOOL and its target win
+// over Detail: PostToolUse carries duration_ms in Detail, so preferring it
+// rendered rows as a bare "144ms" — a fact about the last call, not a
+// description of the work. Detail is the right answer only when there is no
+// tool to name (AgentReturned's final message, a TodoWrite's current item).
 func setActivity(dst *string, ev event.Event) {
-	if ev.Detail != "" {
-		*dst = ev.Detail
-		return
-	}
 	if s := strings.TrimSpace(ev.Tool + " " + ev.Target); s != "" {
 		*dst = s
+		return
+	}
+	if ev.Detail != "" {
+		*dst = ev.Detail
 	}
 }
 

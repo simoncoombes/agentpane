@@ -21,16 +21,16 @@ AGENTS 8[90m · 3f9c[0m                                   [1m⚠ disconnected
 [2;90m│      │ [0m[1;2m⚑ permission request[0m[1;2m  52s[0m[2;90m  +3 more[0m
 [2;90m├─╮[0m
 [2;90m│ ╰[0m[1;2m⚑[0m[1;2m typecheck-works…[0m[2m                             [0m[1;2m·······[0m[2;90m 0.0k/s[0m
-[2;90m│    [0m[2;90mTypecheck the workspace packages[0m
 [2;90m│    [0m[2;90m⤷ [0m[1;2mno call open · silent 2m50s[0m[2m          [0m[2;90m▪▪▫·[0m[2;90m first edit[0m[2;90m  33k[0m
 [2;90m├─╮[0m
 [2;90m│ ╰[0m[2;32m●[0m[2m run-auth-tests[0m[2m                              [0m[2;32m◐ in Bash[0m[2;32m 3m12s[0m
-[2;90m│    [0m[2;90mRun the auth test suite in watch mode[0m
-[2;90m│    [0m[2;90m⤷ [0m[2mkeep the auth suite hot in watch mode[0m[2m           [0m[2;90m▪▫··[0m[2;90m  38k[0m
+[2;90m│    [0m[2;90m⤷ [0m[2mBash pnpm test --watch[0m[2;32m  ✓ verified[0m[2m   [0m[2;90m▪▫··[0m[2;90m first tool[0m[2;90m  38k[0m
 [2;90m├─╮[0m
 [2;90m│ ╰[0m[2;32m●[0m[2m audit-users-schema[0m[2m                           [0m[2;32m··▆··▇·[0m[2;90m 0.1k/s[0m
+[2;90m│    [0m[2;90m⤷ [0m[2mGrep "createUser" src/**[0m[2m             [0m[2;90m▪▪▫·[0m[2;90m first edit[0m[2;90m  52k[0m
 [2;90m├─╮[0m
 [2;90m│ ╰[0m[2;32m●[0m[2m write-email-index[0m[2m                            [0m[2;32m···▇··▄[0m[2;90m 0.3k/s[0m
+[2;90m│    [0m[2;90m⤷ [0m[2mEdit db/migrations/0042.sql[0m[2m          [0m[2;90m▪▪▫·[0m[2;90m first edit[0m[2;90m  86k[0m
 [2;90m├─╮[0m
 [2;90m│ ╰[0m[2;90m○[0m[2;90m document-constr…[0m[2;90m  queued[0m[2m                                   [0m
 [2;90m├─╮[0m
