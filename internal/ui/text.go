@@ -14,10 +14,15 @@ type seg struct {
 	st   Style
 }
 
+// t is the seg's renderable text. Everything that measures, cuts or prints a
+// seg goes through here, so the width the layout budgeted is exactly the width
+// the terminal receives — see flatten for why raw text cannot be trusted.
+func (s seg) t() string { return flatten(s.text) }
+
 func segsWidth(segs []seg) int {
 	w := 0
 	for _, s := range segs {
-		w += runewidth.StringWidth(s.text)
+		w += runewidth.StringWidth(s.t())
 	}
 	return w
 }
@@ -25,9 +30,49 @@ func segsWidth(segs []seg) int {
 func renderSegs(segs []seg) string {
 	var b strings.Builder
 	for _, s := range segs {
-		b.WriteString(s.st.Render(s.text))
+		b.WriteString(s.st.Render(s.t()))
 	}
 	return b.String()
+}
+
+// flatten is the last line of defence for the frame's geometry: it strips the
+// control characters that carry no display width but move the cursor anyway.
+//
+// Every string on a row is platform text - a Bash command, a file path, an
+// assistant message - and any of them can contain a newline. A `python3 -c`
+// one-liner routinely does. runewidth counts \n as zero columns, so neither
+// the width budget nor truncSegs sees it, and the row silently becomes several
+// physical lines: the tree overflows the pane and the terminal scrolls. Callers
+// that want a MEANINGFUL single line use oneLine, which keeps the first line
+// and drops the rest; this only guarantees that whatever they produced cannot
+// break the frame. Tabs become spaces (a tab jumps to the next tab stop, which
+// is not the width that was measured); ESC is dropped so text can never inject
+// its own styling.
+func flatten(s string) string {
+	// The fast path must test the whole control range, not a hand-picked list:
+	// a BEL smuggled through in a command would ring the terminal on every
+	// repaint, and DEL and the C1 escapes move the cursor just as well as \n.
+	clean := true
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s // the common path allocates nothing
+	}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t':
+			return ' '
+		case r == '\n' || r == '\r':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // truncSegs cuts a styled line to max columns, ending with … when anything
@@ -42,14 +87,14 @@ func truncSegs(segs []seg, max int) []seg {
 	budget := max - 1 // room for the ellipsis
 	var out []seg
 	for _, s := range segs {
-		w := runewidth.StringWidth(s.text)
+		w := runewidth.StringWidth(s.t())
 		if w <= budget {
-			out = append(out, s)
+			out = append(out, seg{s.t(), s.st})
 			budget -= w
 			continue
 		}
 		if budget > 0 {
-			out = append(out, seg{truncString(s.text, budget), s.st})
+			out = append(out, seg{truncString(s.t(), budget), s.st})
 		}
 		out = append(out, seg{"…", s.st})
 		return out
