@@ -109,6 +109,14 @@ type sessionState struct {
 	spawnSeq uint64
 	pending  []pendingSpawn
 	starts   map[string]*startState
+	// claimed is a tombstone set: agent ids whose one claim has already been
+	// resolved. corroborate() removes the id from starts, so without this a
+	// second SubagentStart for the same id would look new, re-register with a
+	// fresh watermark, and claim a SECOND description — one belonging to a
+	// later, unrelated agent. Duplicate starts are real: hook connections are
+	// served concurrently, and a hook configured in both global and project
+	// settings fires twice.
+	claimed map[string]bool
 }
 
 // Mapper maps forwarded hook payloads onto the frozen event taxonomy. It is
@@ -229,6 +237,9 @@ func (m *Mapper) startSeen(session, agentID, agentType string) {
 	if _, dup := s.starts[agentID]; dup {
 		return // an id starts once; a repeat carries no new information
 	}
+	if s.claimed[agentID] {
+		return // its one claim is already spent (see sessionState.claimed)
+	}
 	s.starts[agentID] = &startState{typ: agentType, watermark: s.spawnSeq, at: now}
 	s.trimStarts()
 }
@@ -251,6 +262,10 @@ func (m *Mapper) corroborate(session, agentID string) string {
 		return ""
 	}
 	delete(s.starts, agentID)
+	if s.claimed == nil {
+		s.claimed = map[string]bool{}
+	}
+	s.claimed[agentID] = true
 	return s.claim(st)
 }
 

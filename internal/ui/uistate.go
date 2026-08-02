@@ -375,17 +375,28 @@ func (v *UIState) orderedAgents(w state.World) []state.Agent {
 // quietDrawn comes from the geometry, not from len(w.Quiet): the <40-column
 // screen states the count in its header instead of as a row, and j/k must
 // never land on a line that was never painted.
+// Selection must only ever offer rows the frame actually PAINTS. The idle
+// screen (§3.8) draws neither main nor the agent rows — it draws the ready
+// line, the run summary and, when the machine holds suppressed agents, the
+// quiet line. Offering the unpainted ids there means j/k moves an invisible
+// highlight: press it three times and the selection silently leaves the
+// screen. quietDrawn is already geometry-derived for exactly this reason.
 func (v *UIState) selectionIDs(w state.World, bandPresent, quietDrawn bool) []string {
 	ids := make([]string, 0, len(w.Agents)+3)
 	if bandPresent {
 		ids = append(ids, selBand)
 	}
-	ids = append(ids, event.MainAgentID)
+	tree := !idlePhase(w)
+	if tree {
+		ids = append(ids, event.MainAgentID)
+	}
 	if quietDrawn {
 		ids = append(ids, selQuiet)
 	}
-	for _, a := range v.orderedAgents(w) {
-		ids = append(ids, a.ID)
+	if tree {
+		for _, a := range v.orderedAgents(w) {
+			ids = append(ids, a.ID)
+		}
 	}
 	return ids
 }
