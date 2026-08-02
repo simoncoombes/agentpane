@@ -46,6 +46,11 @@ var rewrites = []struct {
 type entry struct {
 	slug  string
 	lossy bool
+	// exact records that this slug was derived from a description obtained by
+	// an EXACT id↔description join (the transcript sidecar) rather than a
+	// hooks correlation, which matches a description to an agent id
+	// heuristically and can be wrong. Only a non-exact slug may be replaced.
+	exact bool
 }
 
 // Table hands out per-run stable slugs. It is not safe for concurrent use;
@@ -75,8 +80,26 @@ func New(max int) *Table {
 // description differs - slugs are stable for the life of the run and are
 // never renumbered.
 func (t *Table) Assign(agentID, description string) string {
+	return t.assign(agentID, description, false)
+}
+
+// AssignExact registers a description that came from an exact join. If the id
+// already carries a slug derived from a correlated (guessed) description, that
+// slug is REPLACED — a stable wrong name is worse than a name that changes
+// once, and the correction is the whole point of tracking provenance. An
+// existing exact slug is never disturbed, so slugs still settle permanently.
+func (t *Table) AssignExact(agentID, description string) string {
+	return t.assign(agentID, description, true)
+}
+
+func (t *Table) assign(agentID, description string, exact bool) string {
 	if e, ok := t.byID[agentID]; ok {
-		return e.slug
+		if !exact || e.exact {
+			return e.slug
+		}
+		// Release the guessed slug so the corrected one may reuse the name.
+		delete(t.byID, agentID)
+		delete(t.used, e.slug)
 	}
 
 	sig := significantTokens(description)
@@ -97,7 +120,7 @@ func (t *Table) Assign(agentID, description string) string {
 	}
 
 	slug, collided := t.resolve(base, sig[kept:])
-	t.byID[agentID] = entry{slug: slug, lossy: lossy || collided}
+	t.byID[agentID] = entry{slug: slug, lossy: lossy || collided, exact: exact}
 	t.used[slug] = struct{}{}
 	return slug
 }

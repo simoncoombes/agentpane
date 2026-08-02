@@ -16,6 +16,13 @@ const flatline = "·······"
 // every token bucket is zero but calls exist, it falls back to calls
 // automatically (§3.4). Empty buckets render ·. Never interpolated (C8).
 func sparkline(buckets [60]state.SparkBucket, metric string) string {
+	return sparklineScaled(buckets, metric, 0)
+}
+
+// sparklineScaled draws against at least floor, so a caller can hold a fallen
+// maximum steady (see UIState.sparkScale). floor 0 means "scale to the window",
+// the §3.4 rule.
+func sparklineScaled(buckets [60]state.SparkBucket, metric string, floor int) string {
 	vals := bucketize(buckets, metric)
 	if metric != "calls" && allZero(vals) {
 		if calls := bucketize(buckets, "calls"); !allZero(calls) {
@@ -30,6 +37,9 @@ func sparkline(buckets [60]state.SparkBucket, metric string) string {
 	}
 	if max == 0 {
 		return flatline
+	}
+	if floor > max {
+		max = floor
 	}
 	out := make([]rune, sparkCells)
 	for i, v := range vals {
@@ -83,4 +93,24 @@ func tokensLastMinute(buckets [60]state.SparkBucket) int {
 		n += b.Tokens
 	}
 	return n
+}
+
+// effectiveSpark reports the metric the sparkline will ACTUALLY draw (after
+// the tokens→calls fallback) and that window's max. The caller needs both:
+// holding a scale across a metric flip would apply a token-sized floor to a
+// call count.
+func effectiveSpark(buckets [60]state.SparkBucket, metric string) (string, int) {
+	vals := bucketize(buckets, metric)
+	if metric != "calls" && allZero(vals) {
+		if calls := bucketize(buckets, "calls"); !allZero(calls) {
+			vals, metric = calls, "calls"
+		}
+	}
+	max := 0
+	for _, v := range vals {
+		if v > max {
+			max = v
+		}
+	}
+	return metric, max
 }

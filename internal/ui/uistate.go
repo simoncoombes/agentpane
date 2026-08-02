@@ -95,6 +95,13 @@ type UIState struct {
 	// Layout.
 	WidthMode string // "wide" (64) | "narrow" (44), toggled with w (§3.1)
 	RightCol  string // "since" | "rate" (§5.1 t)
+	// SparkScale holds each agent's sparkline scale so bars settle instead of
+	// jumping. §3.4 scales an agent against its own max over the trailing 60s,
+	// but that max changes every time a tall bucket rolls out of the window,
+	// and every remaining bar grows to fill the new scale — the activity did
+	// not change, the yardstick did. A fallen max is held for sparkHold before
+	// it is adopted, so the shape can only rescale a few times a minute.
+	SparkScale map[string]sparkScale
 
 	// Selection and expansion (§3.3, §3.17).
 	SelID     string
@@ -163,6 +170,38 @@ type UIState struct {
 }
 
 // newUIState builds view state from config defaults.
+// sparkHold is how long a fallen sparkline maximum is kept before the smaller
+// one is adopted. Long enough that a burst rolling out of the window does not
+// visibly rescale the row; short enough that a genuinely quieter agent
+// re-scales within a few seconds.
+const sparkHold = 6 * time.Second
+
+// sparkScale is one agent's held sparkline scale.
+type sparkScale struct {
+	max   int
+	until time.Time
+}
+
+// sparkFloor returns the scale to draw id against, holding a fallen maximum
+// for sparkHold. A rising max is adopted immediately: a new peak is real
+// information and must never be clipped.
+// The key carries the EFFECTIVE metric, not just the agent: sparkline falls
+// back from tokens to calls when every token bucket is empty, and a floor of
+// 800 tokens applied to a 3-call window flattens every cell to ▁ — scaled by
+// the wrong yardstick, which is the jitter this hold exists to remove.
+func (v *UIState) sparkFloor(id, metric string, max int, now time.Time) int {
+	if v.SparkScale == nil {
+		v.SparkScale = map[string]sparkScale{}
+	}
+	key := id + "\x00" + metric
+	held, ok := v.SparkScale[key]
+	if !ok || max >= held.max || !now.Before(held.until) {
+		v.SparkScale[key] = sparkScale{max: max, until: now.Add(sparkHold)}
+		return max
+	}
+	return held.max
+}
+
 func newUIState(cfg config.Config) *UIState {
 	v := &UIState{
 		WidthMode: cfg.Width,
@@ -174,6 +213,7 @@ func newUIState(cfg config.Config) *UIState {
 		RightCol:    "rate",
 		SelID:       event.MainAgentID,
 		Pins:        map[string]int{},
+		SparkScale:  map[string]sparkScale{},
 		Logs:        NewEventLog(),
 		Slugs:       slug.New(cfg.SlugMax),
 		MaxCalls:    cfg.MaxCallsShown,
@@ -227,6 +267,14 @@ func (v *UIState) slugFor(a state.Agent) string {
 	}
 	if a.Name == "" {
 		return placeholderName(a.ID, a.Type)
+	}
+	// Exactness must travel with every namer, not just the full tree's
+	// assignSlugsInSpawnOrder: the condensed, tiny, idle and band paths reach
+	// slugFor directly, and a plain Assign would pin a wrongly-correlated name
+	// for the rest of the run on exactly the geometries with least room to
+	// notice.
+	if a.NameExact {
+		return v.Slugs.AssignExact(a.ID, a.Name)
 	}
 	return v.Slugs.Assign(a.ID, a.Name)
 }
@@ -341,7 +389,15 @@ func (v *UIState) assignSlugsInSpawnOrder(agents []state.Agent) {
 		// Unnamed agents are skipped, not registered: assigning now would
 		// burn a permanent "agent"/"agent-2" slug on a description that has
 		// not arrived yet, and slugs never change once assigned (§3.16).
-		if !agents[i].Teammate && agents[i].Name != "" {
+		if agents[i].Teammate || agents[i].Name == "" {
+			continue
+		}
+		// An exact name (transcript sidecar) may REPLACE a slug derived from a
+		// hooks correlation, which matches descriptions to ids heuristically.
+		// A stable wrong name is worse than one that changes once.
+		if agents[i].NameExact {
+			v.Slugs.AssignExact(agents[i].ID, agents[i].Name)
+		} else {
 			v.Slugs.Assign(agents[i].ID, agents[i].Name)
 		}
 	}

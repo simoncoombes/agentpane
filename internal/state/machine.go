@@ -1236,6 +1236,7 @@ func (m *Machine) snapshotAgent(a *agentState) Agent {
 	out := Agent{
 		ID:            a.id,
 		Name:          a.name,
+		NameExact:     a.nameExact,
 		Type:          a.typ,
 		Teammate:      a.teammate,
 		Status:        a.status,

@@ -173,11 +173,14 @@ type Main struct {
 
 // Agent is one subagent row (§2.9, rev 3.1).
 type Agent struct {
-	ID       string
-	Name     string // the spawn description; the UI slugs it (§3.16)
-	Type     string // subagent_type
-	Teammate bool
-	Status   Status
+	ID   string
+	Name string // the spawn description; the UI slugs it (§3.16)
+	// NameExact marks Name as coming from an exact id↔description join rather
+	// than a hooks correlation, so the UI may replace a guessed slug with it.
+	NameExact bool
+	Type      string // subagent_type
+	Teammate  bool
+	Status    Status
 	// Station is the highest observed station, monotonic (§2.2):
 	// 0 spawn, 1 first tool, 2 first edit, 3 return.
 	Station int

@@ -686,7 +686,9 @@ func rowRight(a state.Agent, v *UIState, wide bool, now time.Time, pal Palette) 
 		case a.Status == state.StatusDone:
 			out = append(out, seg{flatline, pal.Settled})
 		default:
-			out = append(out, seg{sparkline(a.SparkBuckets, v.SparkMetric), pal.Live})
+			metric, max := effectiveSpark(a.SparkBuckets, v.SparkMetric)
+			floor := v.sparkFloor(a.ID, metric, max, now)
+			out = append(out, seg{sparklineScaled(a.SparkBuckets, v.SparkMetric, floor), pal.Live})
 		}
 	}
 	out = append(out, seg{" " + num, sinceStyle})

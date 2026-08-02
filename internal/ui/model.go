@@ -567,6 +567,7 @@ func (m *Model) resetForSession(sessionID string) {
 	m.v.Logs = NewEventLog()
 	m.v.Slugs = slug.New(m.cfg.Cfg.SlugMax)
 	m.v.Pins = map[string]int{}
+	m.v.SparkScale = map[string]sparkScale{}
 	m.v.PinSeq = 0
 	m.v.ScrollTop = 0
 	m.v.SelID = event.MainAgentID
