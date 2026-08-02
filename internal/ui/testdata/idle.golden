@@ -1,0 +1,28 @@
+AGENTS[90m · 3f9c[0m                                               [90midle[0m
+[90m────────────────────────────────────────────────────────────────[0m
+[32m◍[0m claude[90m ready · ~/src/api[0m
+[90m╰─ [0m[90mno subagents[0m
+
+SESSIONS[2;90m  1–3 switch[0m                         [2;90mattach: newest live[0m
+▸ 3f9c[90m  ~/src/api[0m                     [2;90mlive · 8 agents (attached)[0m
+[90m  2a71[0m[90m  ~/src/api[0m                                    [2;90mlive · idle[0m
+[90m  1c08[0m[90m  ~/src/web[0m                                      [2;90mended 12m[0m
+
+RUN 3f9c                                                 [2;90m[ ] 1/3[0m
+[90m8 subagents · 4m12s · 611k tok · 1 stalled[0m
+[90mmigrate-writer[0m                                   [32m█████████[0m[2;90m 2m32s[0m
+[90mapi-types[0m                                          [32m███████[0m[2;90m 2m00s[0m
+[90mexplore-schema[0m                                       [32m█████[0m[2;90m 1m28s[0m
+[90mtest-runner[0m                                   [32m████████████[0m[2;90m 3m04s[0m
+[90mtypecheck[0m                                                 [32m██[0m[2;90m 36s[0m
+[90mdocs-writer[0m                                           [32m████[0m[2;90m 1m12s[0m
+[90mlint-runner[0m                                              [32m███[0m[2;90m 58s[0m
+[90mschema-audit[0m                                     [32m█████████[0m[2;90m 2m20s[0m
+
+
+
+
+
+
+[90m────────────────────────────────────────────────────────────────[0m
+[90m⠼[0m[90m watching for activity[0m                          [2;90m[ ] browse runs[0m

@@ -1,0 +1,44 @@
+AGENTS 8[90m · 3f9c[0m                                   [1m⚠ disconnected[0m
+[90m────────────────────────────────────────────────────────────────[0m
+[1;2;7m⚑ NEEDS YOU[0m[2m                                                     [0m
+[1;2mfix-ts2345-fallout[0m[2m  permission[0m[1;2m ×3[0m[2m                            [0m[1;2m52s[0m
+[2mrun: rm -rf node_modules/.cache && pnpm rebuild[0m
+[2;90manswer in the left pane — ⏎ jumps focus[0m
+[2;90m+2 retry agents folded[0m
+[1;2mtypecheck-works…[0m[2m  stalled[0m[2m                                  [0m[1;2m2m50s[0m
+[2mno call open · silent 2m50s[0m
+[2;90mo opens the log · y yanks the command[0m
+[2;90m────────────────────────────────────────────────────────────────[0m
+[1;2m◍[0m[2m main[0m[2;90m  refactor auth[0m[2m                                       [0m[2;90m112k[0m
+[2;90m│ [0m[2mwrite the migration[0m[2m                                         [0m[2;90m5s[0m
+[2;90m├─╮[0m
+[2;7m│ ╰[0m[1;2;7m⚑[0m[1;2;7m fix-ts2345-fallout[0m[2;7m  ↺2[0m[2;7m                          [0m[2;7m▇······[0m[1;2;7m 52s[0m
+[2;90m│    [0m[2;90mFix the TS2345 fallout in api handlers[0m
+[2;90m│    [0m[2;90m⤷ [0m[1;2mblocked · asked to clear the TS cache[0m[2m           [0m[2;90m▪▪▫·[0m[2;90m  44k[0m
+[2;90m│      │ [0m[2;32m✔[0m[2;90m Edit api/types.ts[0m[2;90m  +29 −4[0m
+[2;90m│      │ [0m[1;2m✖[0m[2;90m Bash pnpm typecheck[0m[2;90m  1 err[0m
+[2;90m│      │ [0m[2;32m✔[0m[2;90m Edit api/handlers.ts[0m[2;90m  +6 −2[0m
+[2;90m│      │ [0m[1;2m⚑ permission request[0m[1;2m  52s[0m[2;90m  +3 more[0m
+[2;90m├─╮[0m
+[2;90m│ ╰[0m[1;2m⚑[0m[1;2m typecheck-works…[0m[2m                              [0m[1;2m·······[0m[1;2m 2m50s[0m
+[2;90m├─╮[0m
+[2;90m│ ╰[0m[2;32m●[0m[2m run-auth-tests[0m[2m                              [0m[2;32m◐ in Bash[0m[2;32m 3m12s[0m
+[2;90m├─╮[0m
+[2;90m│ ╰[0m[2;32m●[0m[2m audit-users-schema[0m[2m                               [0m[2;32m··▆··▇·[0m[2;90m 3s[0m
+[2;90m├─╮[0m
+[2;90m│ ╰[0m[2;32m●[0m[2m write-email-index[0m[2m                                [0m[2;32m···▇··▄[0m[2;90m 8s[0m
+[2;90m├─╮[0m
+[2;90m│ ╰[0m[2;90m○[0m[2;90m document-constr…[0m[2;90m  queued[0m[2m                                   [0m
+[2;90m├─╮[0m
+[2;90m│ ╰[0m[2;90m●[0m[2;90m lint-and-format[0m[2;90m  returned · 0:46[0m[2m                           [0m
+[2;90m╰─╮[0m
+[2;90m  ╰[0m[2;90m◇[0m[2;90m reviewer[0m[2;90m  limited telemetry[0m[2m                                [0m
+[2;90m────────────────────────────────────────────────────────────────[0m
+[1;2m⚠ 2 agents editing db/schema.ts[0m
+[2;90m  audit-users-schema + write-email-index[0m
+
+
+
+
+[90m────────────────────────────────────────────────────────────────[0m
+[2;90mj/k ␣ ⏎ f o y · t tokens[0m                         [90mretrying in 1s…[0m

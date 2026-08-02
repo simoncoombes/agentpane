@@ -1,0 +1,44 @@
+AGENTS 8[90m · 3f9c[0m                                    [1m⚑ 2 NEEDS YOU[0m
+[90m────────────────────────────────────────────────────────────────[0m
+[1;7m⚑ NEEDS YOU[0m                                                     
+[1mfix-ts2345-fallout[0m  permission[1m ×3[0m                            [1m52s[0m
+run: rm -rf node_modules/.cache && pnpm rebuild
+[2;90manswer in the left pane — ⏎ jumps focus[0m
+[90m+2 retry agents folded[0m
+[1mtypecheck-works…[0m  stalled                                  [1m2m50s[0m
+no call open · silent 2m50s
+[2;90mo opens the log · y yanks the command[0m
+[90m────────────────────────────────────────────────────────────────[0m
+[1m◍[0m main[90m  refactor auth[0m                                       [90m112k[0m
+[90m│ [0mwrite the migration                                         [2;90m5s[0m
+[90m├─╮[0m
+[7m│ ╰[0m[1;7m⚑[0m[1;7m fix-ts2345-fallout[0m[7m  ↺2[0m[7m                          [0m[7m▇······[0m[1;7m 52s[0m
+[90m│    [0m[90mFix the TS2345 fallout in api handlers[0m
+[90m│    [0m[90m⤷ [0m[1mblocked · asked to clear the TS cache[0m           [2;90m▪▪▫·[0m[90m  44k[0m
+[90m│      │ [0m[32m✔[0m[90m Edit api/types.ts[0m[2;90m  +29 −4[0m
+[90m│      │ [0m[1m✖[0m[90m Bash pnpm typecheck[0m[2;90m  1 err[0m
+[90m│      │ [0m[32m✔[0m[90m Edit api/handlers.ts[0m[2;90m  +6 −2[0m
+[90m│      │ [0m[1m⚑ permission request[0m[1m  52s[0m[2;90m  +3 more[0m
+[90m├─╮[0m
+[90m│ ╰[0m[1m⚑[0m[1m typecheck-works…[0m                              [1m·······[0m[1m 2m50s[0m
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m run-auth-tests                              [32m◐ in Bash[0m[32m 3m12s[0m
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m audit-users-schema                               [32m··▆··▇·[0m[2;90m 3s[0m
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m write-email-index                                [32m···▇··▄[0m[2;90m 8s[0m
+[90m├─╮[0m
+[90m│ ╰[0m[90m○[0m[90m document-constr…[0m[90m  queued[0m                                   
+[90m├─╮[0m
+[90m│ ╰[0m[90m●[0m[90m lint-and-format[0m[90m  returned · 0:46[0m                           
+[90m╰─╮[0m
+[90m  ╰[0m[90m◇[0m[90m reviewer[0m[90m  limited telemetry[0m                                
+[90m────────────────────────────────────────────────────────────────[0m
+[1m⚠ 2 agents editing db/schema.ts[0m
+[90m  audit-users-schema + write-email-index[0m
+
+
+
+
+[90m────────────────────────────────────────────────────────────────[0m
+[2;90mj/k ␣ ⏎ f o y · t tokens[0m                      [2;90msince last event →[0m

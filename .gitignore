@@ -1,0 +1,8 @@
+# Build output
+/agentpane
+/dist/
+
+# Local scratch
+*.out
+*.test
+*.prof
