@@ -12,7 +12,7 @@ no call open · silent 2m50s
 [1m◍[0m main[90m  Build agentpane — live TUI monitor for Claude Code…[0m [90m112k[0m
 [90m│ [0mwrite the migration                                         [2;90m5s[0m
 [90m├─╮[0m
-[7m│ ╰[0m[1;7m⚑[0m[1;7m fix-ts2345-fallout[0m[7m  ↺2[0m[7m                       [0m[7m▇······[0m[7m 0.0k/s[0m
+[7m│ ╰[0m[1;7m⚑[0m[1;7m fix-ts2345-fallout[0m[7m  ↺2[0m[7m                        [0m[7m ·····[0m[7m 0.0k/s[0m
 [90m│    [0m[90mFix the TS2345 fallout in api handlers[0m
 [90m│    [0m[90m⤷ [0m[1mblocked · asked to clear the TS cache[0m           [2;90m▪▪▫·[0m[90m  44k[0m
 [90m│      │ [0m[32m✔[0m[90m Edit api/types.ts[0m[2;90m  +29 −4[0m
@@ -26,10 +26,10 @@ no call open · silent 2m50s
 [90m│ ╰[0m[32m●[0m run-auth-tests                              [32m◐ in Bash[0m[32m 3m12s[0m
 [90m│    [0m[90m⤷ [0mBash pnpm test --watch[32m  ✓ verified[0m   [2;90m▪▫··[0m[2;90m first tool[0m[90m  38k[0m
 [90m├─╮[0m
-[90m│ ╰[0m[32m●[0m audit-users-schema                           [32m··▆··▇·[0m[2;90m 0.1k/s[0m
+[90m│ ╰[0m[32m●[0m audit-users-schema                            [32m⠼▇▇···[0m[2;90m 0.1k/s[0m
 [90m│    [0m[90m⤷ [0mGrep "createUser" src/**             [2;90m▪▪▫·[0m[2;90m first edit[0m[90m  52k[0m
 [90m├─╮[0m
-[90m│ ╰[0m[32m●[0m write-email-index                            [32m···▇··▄[0m[2;90m 0.3k/s[0m
+[90m│ ╰[0m[32m●[0m write-email-index                             [32m ▇▇▇▇▇[0m[2;90m 0.3k/s[0m
 [90m│    [0m[90m⤷ [0mEdit db/migrations/0042.sql          [2;90m▪▪▫·[0m[2;90m first edit[0m[90m  86k[0m
 [90m├─╮[0m
 [90m│ ╰[0m[90m○[0m[90m document-constr…[0m[90m  queued[0m                                   

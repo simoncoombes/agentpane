@@ -49,6 +49,9 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 	agents := v.orderedAgents(w)
 	v.assignSlugsInSpawnOrder(w.Agents)
 	wide := width >= 60
+	// One denominator for every row: bars only mean something if they share a
+	// scale (gauge.go).
+	runMax := runActivityMax(agents, v.SparkMetric)
 
 	marks := map[string]bool{}
 	if v.Digest != nil {
@@ -93,7 +96,7 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 				n = c
 			}
 			blocks = append(blocks, agentBlock(w, v, a, i == len(agents)-1,
-				expanded[a.ID], n, noRoom[a.ID], inner, wide, now, pal))
+				expanded[a.ID], runMax, n, noRoom[a.ID], inner, wide, now, pal))
 		}
 		return blocks
 	}
@@ -514,7 +517,7 @@ func budgetLabel(s string, max int) string {
 }
 
 // agentBlock renders one subagent per the §3.3 row anatomy.
-func agentBlock(w state.World, v *UIState, a state.Agent, last, expanded bool,
+func agentBlock(w state.World, v *UIState, a state.Agent, last, expanded bool, runMax int,
 	callsShown int, pinnedNoRoom bool, width int, wide bool, now time.Time, pal Palette) block {
 
 	sl := v.slugFor(a)
@@ -541,7 +544,7 @@ func agentBlock(w state.World, v *UIState, a state.Agent, last, expanded bool,
 	if tail := rowTail(a, now, pinnedNoRoom); tail != "" {
 		left = append(left, seg{"  " + tail, pal.Settled})
 	}
-	right := rowRight(a, v, wide, now, pal)
+	right := rowRight(a, v, wide, runMax, now, pal)
 	l1 := composeLR(left, right, width)
 	if selected {
 		l1 = reverseLine(l1)
@@ -687,10 +690,12 @@ func rowTail(a state.Agent, now time.Time, pinnedNoRoom bool) string {
 }
 
 // rowRight renders the §2.6a right-hand side: open call → ◐ in <Tool> + time
-// in call; otherwise sparkline (wide) + since (or the t burn rate).
-func rowRight(a state.Agent, v *UIState, wide bool, now time.Time, pal Palette) []seg {
+// in call; otherwise the activity gauge (wide) + since (or the t burn rate).
+// runMax is the busiest live agent's level, the shared denominator that makes
+// one row's bar mean the same as another's (see gauge.go).
+func rowRight(a state.Agent, v *UIState, wide bool, runMax int, now time.Time, pal Palette) []seg {
 	if a.Teammate || a.Status == state.StatusQueued || a.Decayed {
-		return nil // no clock, no sparkline (§3.15, §3.5)
+		return nil // no clock, no gauge (§3.15, §3.5)
 	}
 	warn := needsYou(a)
 	sinceStyle := pal.Deep
@@ -720,9 +725,7 @@ func rowRight(a state.Agent, v *UIState, wide bool, now time.Time, pal Palette) 
 		case a.Status == state.StatusDone:
 			out = append(out, seg{flatline, pal.Settled})
 		default:
-			metric, max := effectiveSpark(a.SparkBuckets, v.SparkMetric)
-			floor := v.sparkFloor(a.ID, metric, max, now)
-			out = append(out, seg{sparklineScaled(a.SparkBuckets, v.SparkMetric, floor), pal.Live})
+			out = append(out, seg{gaugeFor(a, v.SparkMetric, runMax, now), pal.Live})
 		}
 	}
 	out = append(out, seg{" " + num, sinceStyle})
