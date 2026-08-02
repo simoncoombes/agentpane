@@ -3,7 +3,6 @@ package hooksrc
 import (
 	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -466,6 +465,7 @@ func (m *Mapper) mapPayload(p hookPayload, base event.Event, in toolInput) []eve
 		start.Kind = event.ToolStart
 		start.Tool = p.ToolName
 		start.Target = targetFrom(in)
+		start.Says = in.Description
 		evs := []event.Event{start}
 
 		if p.ToolName == "Agent" && p.AgentID == "" {
@@ -497,8 +497,9 @@ func (m *Mapper) mapPayload(p hookPayload, base event.Event, in toolInput) []eve
 		end.Kind = event.ToolEnd
 		end.Tool = p.ToolName
 		end.Target = targetFrom(in)
+		end.Says = in.Description
 		if p.DurationMS != nil {
-			end.Detail = strconv.FormatInt(*p.DurationMS, 10) + "ms"
+			end.Duration = time.Duration(*p.DurationMS) * time.Millisecond
 		}
 		evs := []event.Event{end}
 

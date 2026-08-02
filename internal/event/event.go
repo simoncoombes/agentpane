@@ -35,6 +35,15 @@ type Event struct {
 	Kind      Kind
 	Tool      string // "Bash" | "Edit" | "Read" | "Grep" | "Agent" | ...
 	Target    string // file path, command, or pattern (raw; UI shortens)
+	// Says is the tool's own human summary of the call (the Bash tool's
+	// `description`: "Hold an open 45s foreground call on main"). Target keeps
+	// the raw command, because contention, open-file tracking and yanking all
+	// need the real thing; Says is what a row should SHOW when the platform
+	// bothered to write one.
+	Says string
+	// Duration is how long a finished call took. Deliberately not Detail:
+	// putting it there once made rows describe their work as "144ms".
+	Duration  time.Duration
 	Detail    string // one-line human summary
 	Tokens    int    // cumulative for this agent if known, else delta
 	TokensCum bool   // true when Tokens is cumulative

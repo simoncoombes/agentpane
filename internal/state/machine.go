@@ -1389,6 +1389,14 @@ func isEditTool(tool string) bool {
 // description of the work. Detail is the right answer only when there is no
 // tool to name (AgentReturned's final message, a TodoWrite's current item).
 func setActivity(dst *string, ev event.Event) {
+	// The tool's own human summary wins: "Hold an open 45s foreground call on
+	// main" beats `end=$(( $(date +%s) + 45 )); until [ "$(date +%…` truncated
+	// mid-expression. The raw target is still what Target carries, so yanking,
+	// contention and the open-file tracker are unaffected.
+	if s := strings.TrimSpace(ev.Says); s != "" {
+		*dst = s
+		return
+	}
 	if s := strings.TrimSpace(ev.Tool + " " + ev.Target); s != "" {
 		*dst = s
 		return

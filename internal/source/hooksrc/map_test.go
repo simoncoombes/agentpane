@@ -3,6 +3,7 @@ package hooksrc
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/simoncoombes/agentpane/internal/event"
 )
@@ -97,6 +98,7 @@ func TestMapLineGolden(t *testing.T) {
 					SessionID: "292ef2e2-...", AgentID: event.MainAgentID,
 					Kind: event.ToolStart, Tool: "Agent",
 					Target: "Execute bash, read file, report done",
+					Says:   "Execute bash, read file, report done",
 				},
 			},
 		},
@@ -106,6 +108,7 @@ func TestMapLineGolden(t *testing.T) {
 			want: []event.Event{{
 				SessionID: "292ef2e2-...", AgentID: "ada0620f224b32d63", AgentType: "general-purpose",
 				Kind: event.ToolStart, Tool: "Bash", Target: "echo subagent-was-here",
+				Says: "...",
 			}},
 		},
 		{
@@ -128,7 +131,8 @@ func TestMapLineGolden(t *testing.T) {
 			want: []event.Event{{
 				SessionID: "292ef2e2-...", AgentID: "ada0620f224b32d63", AgentType: "general-purpose",
 				Kind: event.ToolEnd, Tool: "Bash", Target: "echo subagent-was-here",
-				Detail: "142ms",
+				Says:     "...",
+				Duration: 142 * time.Millisecond,
 			}},
 		},
 		{
@@ -137,7 +141,7 @@ func TestMapLineGolden(t *testing.T) {
 			want: []event.Event{
 				{
 					SessionID: "292ef2e2-...", AgentID: event.MainAgentID,
-					Kind: event.ToolEnd, Tool: "Edit", Target: "/tmp/x.go", Detail: "9ms",
+					Kind: event.ToolEnd, Tool: "Edit", Target: "/tmp/x.go", Duration: 9 * time.Millisecond,
 				},
 				{
 					SessionID: "292ef2e2-...", AgentID: event.MainAgentID,

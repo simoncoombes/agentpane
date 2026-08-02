@@ -243,6 +243,9 @@ func (s *Source) toolUseEvents(st *fileState, ln rawLine, b contentBlock, at tim
 	evs := []event.Event{s.newEvent(event.ToolStart, at, st.agentID, ln.SessionID, raw, func(e *event.Event) {
 		e.Tool = b.Name
 		e.Target = target
+		// The tool's own human summary, when it wrote one: a row shows this
+		// rather than a shell condition truncated mid-expression.
+		e.Says = str(input["description"])
 		e.Detail = truncate(detail)
 	})}
 	if b.Name == "Read" && str(input["file_path"]) != "" {
