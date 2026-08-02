@@ -165,8 +165,13 @@ type UIState struct {
 // newUIState builds view state from config defaults.
 func newUIState(cfg config.Config) *UIState {
 	v := &UIState{
-		WidthMode:   cfg.Width,
-		RightCol:    "since",
+		WidthMode: cfg.Width,
+		// The right column defaults to the token burn rate. Time-since-last-
+		// event answers "has this gone quiet?", which the stall machinery
+		// already shouts about on its own; the rate answers "what is this
+		// agent doing right now?", which is the question a row full of a
+		// resetting stopwatch could not. `t` swaps back (§5.1, §3.18).
+		RightCol:    "rate",
 		SelID:       event.MainAgentID,
 		Pins:        map[string]int{},
 		Logs:        NewEventLog(),

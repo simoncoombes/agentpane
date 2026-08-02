@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -80,11 +81,19 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 		addPre(selQuiet, ln)
 	}
 
+	// calls is the per-agent tool-call budget; anything not listed gets the
+	// default. Auto-expanded rows (below) take 0 so breadth costs one line
+	// each, while the selected agent keeps its history.
+	calls := map[string]int{}
 	build := func(callsShown int, expanded map[string]bool, noRoom map[string]bool) []block {
 		blocks := make([]block, 0, len(agents))
 		for i, a := range agents {
+			n := callsShown
+			if c, ok := calls[a.ID]; ok && c < n {
+				n = c
+			}
 			blocks = append(blocks, agentBlock(w, v, a, i == len(agents)-1,
-				expanded[a.ID], callsShown, noRoom[a.ID], inner, wide, now, pal))
+				expanded[a.ID], n, noRoom[a.ID], inner, wide, now, pal))
 		}
 		return blocks
 	}
@@ -136,6 +145,43 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 			noRoom[id] = true
 			blocks = build(callsShown, expanded, noRoom)
 		}
+	}
+
+	// §3.3 makes the SELECTED agent expand; it never said the pane should sit
+	// two-thirds empty while every other agent hides what it is doing. When
+	// rows remain after the budget above, spend them on activity lines —
+	// breadth first (one line per agent, no call history), attention and live
+	// agents before settled ones. Each candidate is trial-fitted, so this can
+	// never push the tree into scrolling; it only ever consumes slack.
+	for _, a := range autoExpandOrder(agents) {
+		if fixed+count(blocks) >= avail {
+			break
+		}
+		if expanded[a.ID] || noRoom[a.ID] || !expandable(a) {
+			continue
+		}
+		trial := make(map[string]bool, len(expanded)+1)
+		for k, v := range expanded {
+			trial[k] = v
+		}
+		trial[a.ID] = true
+		prevCalls := calls[a.ID]
+		hadCalls := false
+		if _, ok := calls[a.ID]; ok {
+			hadCalls = true
+		}
+		calls[a.ID] = 0
+		nb := build(callsShown, trial, noRoom)
+		if fixed+count(nb) <= avail {
+			expanded, blocks = trial, nb
+			continue
+		}
+		if hadCalls {
+			calls[a.ID] = prevCalls
+		} else {
+			delete(calls, a.ID)
+		}
+		break
 	}
 
 	res := treeResult{}
@@ -722,4 +768,24 @@ const openCallDwell = 2 * time.Second
 // ends, and the dwell only ever delays the swap, never reverses it mid-call.
 func showOpenCall(a state.Agent, now time.Time) bool {
 	return a.OpenCall != nil && now.Sub(a.OpenCall.Since) >= openCallDwell
+}
+
+// autoExpandOrder ranks agents for the spare-room expansion: the ones whose
+// activity the user most needs first. Attention states lead, then live work,
+// then everything else in render order. Settled and never-expandable rows are
+// left to the caller's expandable() check.
+func autoExpandOrder(agents []state.Agent) []state.Agent {
+	rank := func(a state.Agent) int {
+		switch a.Status {
+		case state.StatusAsk, state.StatusStuck:
+			return 0
+		case state.StatusRun:
+			return 1
+		default:
+			return 2
+		}
+	}
+	out := append([]state.Agent(nil), agents...)
+	sort.SliceStable(out, func(i, j int) bool { return rank(out[i]) < rank(out[j]) })
+	return out
 }

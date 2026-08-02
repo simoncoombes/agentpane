@@ -244,9 +244,15 @@ func TestKeymapToasts(t *testing.T) {
 		t.Errorf("w toggle = %q toast %q", m.v.WidthMode, m.v.Toast.Text)
 	}
 
+	// The right column starts on the token burn rate, so the first t swaps
+	// to time-since-last-event and the second swaps back.
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if m.v.RightCol != "since" || m.v.Toast.Text != "right column: since last event" {
+		t.Errorf("t toggle = %q toast %q", m.v.RightCol, m.v.Toast.Text)
+	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 	if m.v.RightCol != "rate" || m.v.Toast.Text != "right column: token rate" {
-		t.Errorf("t toggle = %q toast %q", m.v.RightCol, m.v.Toast.Text)
+		t.Errorf("t toggle back = %q toast %q", m.v.RightCol, m.v.Toast.Text)
 	}
 
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
