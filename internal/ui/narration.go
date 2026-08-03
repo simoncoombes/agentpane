@@ -419,7 +419,15 @@ func renderAlertOnly(entries []bandEntry, dig *digest, v *UIState, width, rows i
 		return nil, nil
 	}
 	body := bandBody(entries, dig, width, pal)
-	action := bandAction(entries)
+	// How many ENTRIES this region can seat, which at tight heights is fewer
+	// than the §3.7.6 cap. The action row may only speak for an entry inside
+	// that window: bounding it by the cap let the row carry a stall's keys
+	// while the stall had no row on the frame at all.
+	seatable := (rows - 1) / bandRowsPerEntry
+	if seatable < 1 {
+		seatable = 1
+	}
+	action := bandActionN(entries, seatable)
 
 	// The chip plus the oldest entry's core rows are paid for first; everything
 	// else competes for what is left.

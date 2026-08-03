@@ -40,6 +40,21 @@ import (
 // That keeps the log's lasting record of the approved bytes — nothing is
 // rewritten, both forms are fixed when the entry is appended — without ever
 // printing the same command twice in one frame.
+//
+// SCOPE, stated because a guard that overstates itself is worse than none: this
+// sweeps the ALWAYS-ON regions — band/standup, commentary, tree, header, footer.
+// Two surfaces are deliberately exempt and are covered by
+// TestExemptSurfacesRepeatTheCommandOnPurpose instead:
+//
+//   - The inspector's log. PART 4 specifies the log as the agent's history and
+//     §3.7 specifies the command on the band row; a reader who opens a drill-down
+//     for one agent has asked for its detail, and the log is the only place the
+//     bytes survive after the ask resolves and the band moves on.
+//   - The `yanked: <cmd>…` toast. It is a transient confirmation of what just
+//     went to the clipboard, and confirming a copy by echoing something other
+//     than what was copied would be worse than the repeat.
+//
+// Both are bounded: at most twice on screen, never three times.
 
 // commandWorlds are the six worlds the invariant is swept over: every shape that
 // puts a verbatim command on screen at all.
@@ -452,6 +467,42 @@ func TestAResolvedAskClaimsNoneOfTheNeedsYouSurfaces(t *testing.T) {
 	for _, want := range []string{"⚑ 1 NEEDS YOU", copyBandNeedsYou, "waiting on you"} {
 		if !strings.Contains(back, want) {
 			t.Errorf("an unanswered ask did not take back %q:\n%s", want, back)
+		}
+	}
+}
+
+// The two surfaces the invariant exempts still have a bound: the command may
+// appear at most twice on a frame, never three times, and the exemption must be
+// the only reason it appears twice at all. Sweeping them is what makes the
+// invariant's scope statement checkable rather than an assertion.
+func TestExemptSurfacesRepeatTheCommandOnPurpose(t *testing.T) {
+	for name, mk := range commandWorlds(t) {
+		for _, rows := range []int{27, 34, 44, 60} {
+			for _, cols := range []int{64, 100} {
+				t.Run(name, func(t *testing.T) {
+					v, w, cmd := mk()
+					if cmd == "" {
+						t.Skip("world has no command")
+					}
+					v.InspectorOpen = true
+					for _, a := range w.Agents {
+						if a.Status == state.StatusAsk {
+							v.SelID = a.ID
+						}
+					}
+					// The toast the app actually produces: §5.2's `yanked: <text…>`,
+					// truncated exactly as keys.go does. A full-command toast is not
+					// a state this code can reach, and testing one would have
+					// demanded a fix for a bug that does not exist.
+					v.Toast = toast{Text: "yanked: " + truncString(cmd, 24) + "…", At: demoNow()}
+					frame, _ := renderFrame(w, v, cols, rows, demoNow(), NewPalette(2, false))
+					got := strings.Count(squash(stripANSI(frame)), squash(cmd))
+					if got > 2 {
+						t.Errorf("%s %dx%d: command appears %d times; the exemptions allow at most 2:\n%s",
+							name, cols, rows, got, stripANSI(frame))
+					}
+				})
+			}
 		}
 	}
 }

@@ -82,8 +82,11 @@ func renderFrame(w state.World, v *UIState, cols, rows int, now time.Time, pal P
 // carry one alert, and prose would displace it.
 //
 // minTreeRows is the floor the region must leave the tree: main's own two rows
-// plus one agent. Below that the pane is not showing a tree at all, so the
-// voice degrades instead (§13.2: the tree wins when there is not room for both).
+// plus one. It is deliberately NOT four (main plus a whole agent block): at
+// twelve rows a four-row floor starves the band below alertOnlyMin, and §3.7's
+// band outranks an agent row — "who is blocked and on what" is the pane's
+// reason to exist. So at the tightest heights the tree may draw main alone;
+// what it may never do is stay quiet about it (see the starved branch below).
 const minTreeRows = 3
 
 // narrPlan is what to draw below the tree, and the tree that fits above it.
@@ -179,11 +182,14 @@ func narrationPlan(w state.World, v *UIState, width, leftover int, now time.Time
 			if tree.starved {
 				// Nothing the band can give up seats a block, so it keeps every row
 				// it asked for rather than shrinking for nothing, and the tree draws
-				// main alone. That is the honest end of the ladder — no agent row is
-				// claimed and no `1–1 / n` is printed for a window that drew nothing
-				// — and it is one row above the geometry where renderCondensed's
-				// one-liners take over anyway.
+				// main alone. No agent row may be CLAIMED here — but the frame must
+				// still say that rows exist and are not being shown, or a header
+				// reading `AGENTS 8` sits above an empty tree with nothing to
+				// explain it (§1.5: degrade honestly, never silently).
 				tree = attempt(want)
+				if n := agentRowsWanted(w, v); n > 0 && tree.scrollInfo == "" {
+					tree.scrollInfo = fmt.Sprintf("0 / %d", n)
+				}
 			}
 		}
 		if want >= alertOnlyMin {
@@ -723,4 +729,11 @@ func finish(lines [][]seg, ids []string, width, rows int) (string, *frameMeta) {
 		}
 	}
 	return strings.Join(out, "\n"), meta
+}
+
+// agentRowsWanted is how many agent rows the tree would draw given room. It is
+// what a starved frame's `0 / n` claim counts, so the number always matches the
+// header's AGENTS n.
+func agentRowsWanted(w state.World, v *UIState) int {
+	return len(v.orderedAgents(w))
 }

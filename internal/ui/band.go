@@ -243,8 +243,22 @@ func bandChipStyle(st narrate.Standup, entries []bandEntry, dig *digest, pal Pal
 // §3.12 fixes the wording for the alert.
 //
 // Empty means "no alert": the standup keeps its own action.
+// bandRowsPerEntry is what one band entry costs in rows: its label row plus the
+// command row §3.7 requires beneath it. It turns a row budget into a count of
+// entries the region can actually seat.
+const bandRowsPerEntry = 2
+
 func bandAction(entries []bandEntry) string {
-	i := bandActionOwner(entries)
+	return bandActionN(entries, bandCap)
+}
+
+// bandActionN is bandAction for a region that will draw fewer rows than the
+// §3.7.6 cap. renderAlertOnly clips the body to as little as two rows at tight
+// heights, so bounding the hand-off by bandCap was still one number too many:
+// the row could carry a stall's keys while the stall had no row anywhere on the
+// frame. The caller passes what it will actually draw.
+func bandActionN(entries []bandEntry, drawn int) string {
+	i := bandActionOwnerN(entries, drawn)
 	if i < 0 {
 		return ""
 	}
@@ -268,12 +282,19 @@ func bandAction(entries []bandEntry) string {
 // by the window, and when nothing inside it wants the row the primary keeps it and
 // states its own state instead.
 func bandActionOwner(entries []bandEntry) int {
+	return bandActionOwnerN(entries, bandCap)
+}
+
+func bandActionOwnerN(entries []bandEntry, cap int) int {
 	if len(entries) == 0 {
 		return -1
 	}
+	if cap < 1 {
+		cap = 1
+	}
 	drawn := len(entries)
-	if drawn > bandCap {
-		drawn = bandCap
+	if drawn > cap {
+		drawn = cap
 	}
 	for i := 0; i < drawn; i++ {
 		if e := entries[i]; e.kind == kindPermission && e.resolving {
