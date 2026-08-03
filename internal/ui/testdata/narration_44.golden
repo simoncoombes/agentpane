@@ -1,14 +1,5 @@
 AGENTS 8[90m · 3f9c[0m                [1m⚑ 2 NEEDS YOU[0m
 [90m────────────────────────────────────────────[0m
-[1;7m⚑ NEEDS YOU[0m                                 
-[1mfix-ts2345-fallout[0m  permission[1m ×3[0m        [1m52s[0m
-run: rm -rf node_modules/.cache && pnpm reb…
-[2;90manswer in the left pane — ⏎ jumps focus[0m
-[90m+2 retry agents folded[0m
-[1mtypecheck-works…[0m  stalled              [1m2m50s[0m
-no call open · silent 2m50s
-[2;90mo opens the log · y yanks the command[0m
-[90m────────────────────────────────────────────[0m
 [1m◍[0m main[90m  refactor auth[0m                   [90m112k[0m
 [90m│ [0mholding 2 agents · waiting on you       [2;90m5s[0m
 [90m├─╮[0m
@@ -34,11 +25,17 @@ no call open · silent 2m50s
 [90m├─╮[0m
 [90m│ ╰[0m[32m●[0m audit-users-schema        [32m⠼▇▇···[0m[2;90m 0.1k/s[0m
 [90m│    [0m[90m⤷ [0mGrep "createUser" src/**         [2;90m▪▪▫·[0m
+[90m│      │ [0m[32m✔[0m[90m Grep "editUser" src/**[0m
+[90m│      │ [0m[32m✔[0m[90m Edit db/users.ts[0m
 [90m│      │ [0m[32m✔[0m[90m Read db/indexes.ts[0m
-[90m│      │ [0m[32m✔[0m[90m Grep "createUser" src/**[0m[2;90m  +5 more[0m
+[90m│      │ [0m[32m✔[0m[90m Grep "createUser" src/**[0m[2;90m  +3 more[0m
 [90m├─╮[0m
 [90m│ ╰[0m[32m●[0m write-email-index         [32m ▇▇▇▇▇[0m[2;90m 0.3k/s[0m
 [90m│    [0m[90m⤷ [0mEdit db/migrations/0042.sql      [2;90m▪▪▫·[0m
+[90m│      │ [0m[32m✔[0m[90m Write db/migrations/0042.sql[0m
+[90m│      │ [0m[32m✔[0m[90m Read db/indexes.ts[0m
+[90m│      │ [0m[32m✔[0m[90m Edit db/migrations/0042.sql[0m
+[90m│      │ [0m[32m✔[0m[90m Edit db/migrations/0042.sql[0m[2;90m  +2 [0m[2;90m…[0m
 [90m├─╮[0m
 [90m│ ╰[0m[90m○[0m[90m document-constr…[0m[90m  queued[0m               
 [90m├─╮[0m
@@ -48,13 +45,16 @@ no call open · silent 2m50s
 [90m────────────────────────────────────────────[0m
 [1m⚠ 2 agents editing db/schema.ts[0m
 [90m  audit-users-schema + write-email-index[0m
+
+
+
 [90m────────────────────────────────────────────[0m
 [1;7m⚑ NEEDS YOU[0m                             [2;90m5:00[0m
-[1mYou're the blocker. fix-ts2345-fallout is[0m
-[1mwaiting on permission to run `rm -rf[0m
-[1mnode_modules/.cache && pnpm rebuild`, and[0m
-[1mnothing it does next happens without you.[0m
-[2;90m+19 more (must, risk, state) · n for room[0m
+[1mfix-ts2345-fallout[0m  permission[1m ×3[0m        [1m52s[0m
+run: rm -rf node_modules/.cache && pnpm reb…
+[90m+2 retry agents folded[0m
+[1mtypecheck-works…[0m  stalled[90m · no call o[0m[90m…[0m [1m2m50s[0m
+[2;90m+24 more (must, risk, state) · n for room[0m
 [1m▸ answer in the left pane — ⏎ jumps focus[0m
 [90m────────────────────────────────────────────[0m
 [2;90mCOMMENTARY[0m            [2;90m18 entries · ⇞⇟ scroll[0m

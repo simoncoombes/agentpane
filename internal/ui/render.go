@@ -41,21 +41,21 @@ func renderFrame(w state.World, v *UIState, cols, rows int, now time.Time, pal P
 	return finishMeta(renderActive(w, v, width, rows, now, pal), width, rows)
 }
 
-// narrationPlan splits the pane's leftover rows between the tree and the
-// narration, and returns the voice mode actually drawn plus the tree rendered
-// inside the remainder.
+// narrationPlan splits the pane's leftover rows between the tree and the region
+// below it, and returns what to draw there plus the tree rendered in the rest.
 //
-// **The rule at small geometries: the tree wins, and it wins on breadth.**
+// **The rule at small geometries: the tree wins on breadth, the alert wins over
+// prose.**
 //
-// Narration is reserved at its fixed height only while the tree still draws
-// every agent's row AND every agent's activity line. Both signals come from
-// renderTree itself, so the rule cannot drift from what the tree actually did:
-// scrollInfo is set exactly when a row had to be hidden, and breadth is set
-// exactly when the breadth pass finished. The ladder is then: try the requested
-// mode; while either signal says the tree lost something, drop one region
-// (commentary first, then the standup) and try again. Regions are dropped WHOLE
-// and never shrunk, because a narration region whose height depends on the pane
-// is precisely what §13.4 forbids.
+// Prose is reserved at its fixed height only while the tree still draws every
+// agent's row AND every agent's activity line. Both signals come from renderTree
+// itself, so the rule cannot drift from what the tree actually did: scrollInfo is
+// set exactly when a row had to be hidden, and breadth is set exactly when the
+// breadth pass finished. The ladder is then: try the requested mode; while either
+// signal says the tree lost something, drop one region (commentary first, then
+// the standup) and try again. Regions are dropped WHOLE and never shrunk, because
+// a narration region whose height depends on the pane is precisely what §13.4
+// forbids.
 //
 // What narration IS allowed to cost is tool-call history, and that is not a
 // concession — it is the mock's own behaviour, whose call budget shrinks 14 → 8
@@ -65,52 +65,88 @@ func renderFrame(w state.World, v *UIState, cols, rows int, now time.Time, pal P
 // row that will not say what its agent is doing, is information you cannot
 // recover at all, and no sentence is worth it.
 //
-// On a pane where the agents already do not fit, the tree is losing information
-// on its own and narration stays off rather than making that worse. The absence
-// is stated, not silent: the `n` toast says "no room" (narrationFits) and the
-// footer keeps advertising the key, so the mode returns the moment the pane
-// grows.
+// **But the alert is not prose and is not discretionary.** The standup carries
+// the band now (§3.7 via band.go), so withholding the region entirely would
+// withhold the ask — and §3.20 puts the band at intrusion level 1, "always". So
+// when the prose is dropped and there is still an alert, the region keeps the
+// band's own content alone (renderAlertOnly): the same rows the old band region
+// spent, in the same slot below the tree, with no sentences attached. That costs
+// the tree about what the band used to cost it and never more.
+//
+// The absence of the prose is stated, not silent: the `n` toast says "no room"
+// (narrationFits) and the footer keeps advertising the key, so the mode returns
+// the moment the pane grows.
 //
 // Everything below 40 columns (renderTiny), under 12 rows (renderCondensed) and
 // the whole idle screen never reach this function: those geometries exist to
 // carry one alert, and prose would displace it.
-// minTreeRows is the floor narration must leave the tree: main's own two rows
+//
+// minTreeRows is the floor the region must leave the tree: main's own two rows
 // plus one agent. Below that the pane is not showing a tree at all, so the
 // voice degrades instead (§13.2: the tree wins when there is not room for both).
 const minTreeRows = 3
 
-func narrationPlan(w state.World, v *UIState, width, leftover int, now time.Time, pal Palette) (VoiceMode, treeResult) {
-	mode := v.voice()
+// narrPlan is what to draw below the tree, and the tree that fits above it.
+//
+// mode is the voice actually drawn. alertRows > 0 means the prose was dropped and
+// the band is being drawn on its own in that many rows — which only ever happens
+// at mode == VoiceOff, so the two can never both be on screen.
+type narrPlan struct {
+	mode      VoiceMode
+	alertRows int
+	tree      treeResult
+}
+
+func narrationPlan(w state.World, v *UIState, width, leftover int, now time.Time, pal Palette) narrPlan {
+	entries := bandEntries(w, v, now)
 	// Every attempt starts from the same viewport. renderTree writes
 	// UIState.ScrollTop as a side effect of windowing (scrollWindow), so a
 	// REJECTED candidate — which is windowed by definition — would otherwise
 	// leave its scroll position behind for the candidate that is actually drawn.
 	top := v.ScrollTop
-	for {
+	attempt := func(reserve int) treeResult {
 		v.ScrollTop = top
-		avail := leftover - narrationHeight(mode)
-		if avail < 3 {
-			avail = 3
+		avail := leftover - reserve
+		if avail < minTreeRows {
+			avail = minTreeRows
 		}
-		tree := renderTree(w, v, width, avail, now, pal)
+		return renderTree(w, v, width, avail, now, pal)
+	}
+
+	for mode := v.voice(); mode != VoiceOff; mode = mode.degraded() {
+		h := narrationHeight(mode)
+		tree := attempt(h)
 		// The tree's own signals are not sufficient on their own. `avail` is
-		// clamped to a floor of 3, so a tree with few rows reports "not
+		// clamped to a floor of minTreeRows, so a tree with few rows reports "not
 		// scrolling, full breadth" however little room it was given — and a
 		// main-only run (every session before its first Task) has almost no
 		// rows. Accepting on those signals alone let a 20-row narration onto an
 		// 8-row leftover: the pad went negative and the footer, carrying the
 		// toasts and key hints, was clipped off the frame.
 		//
-		// The guard is only that narration must leave the tree its floor. It is
-		// deliberately not "narration + every tree row must fit": the tree is
+		// The guard is only that the region must leave the tree its floor. It is
+		// deliberately not "region + every tree row must fit": the tree is
 		// allowed to window inside its share, and requiring the whole tree
 		// would switch the voice off on any pane with a few agents.
-		fits := narrationHeight(mode) <= leftover-minTreeRows
-		if mode == VoiceOff || (fits && tree.scrollInfo == "" && tree.breadth) {
-			return mode, tree
+		if h <= leftover-minTreeRows && tree.scrollInfo == "" && tree.breadth {
+			return narrPlan{mode: mode, tree: tree}
 		}
-		mode = mode.degraded()
 	}
+
+	// No prose. If there is a band, it still gets its rows — see the header.
+	if want := alertOnlyRows(entries, v.Digest, width, pal); want > 0 {
+		if room := leftover - minTreeRows; want > room {
+			want = room
+		}
+		// alertOnlyMin is the chip plus the oldest entry. Below that there is
+		// genuinely nowhere to put the band and the header's `⚑ n NEEDS YOU` is
+		// the only surface left — which is also the geometry renderCondensed
+		// exists for, one row further down.
+		if want >= alertOnlyMin {
+			return narrPlan{mode: VoiceOff, alertRows: want, tree: attempt(want)}
+		}
+	}
+	return narrPlan{mode: VoiceOff, tree: attempt(0)}
 }
 
 // narrationFits reports whether the requested voice mode is the one being drawn.
@@ -121,24 +157,18 @@ func narrationFits(w state.World, v *UIState, cols, rows int, now time.Time, pal
 		return true
 	}
 	top := v.ScrollTop
-	drawn, _ := narrationPlan(w, v, frameWidth(v, cols), narrationLeftover(w, v, cols, rows, now, pal), now, pal)
+	plan := narrationPlan(w, v, frameWidth(v, cols), narrationLeftover(w, v, cols, rows, now, pal), now, pal)
 	v.ScrollTop = top
-	return drawn == v.voice()
+	return plan.mode == v.voice()
 }
 
-// narrationLeftover recomputes the rows the tree and the narration share. It
-// mirrors renderActive's own arithmetic; keeping it in one small function is what
-// stops the two from drifting.
+// narrationLeftover recomputes the rows the tree and the region below it share.
+// It mirrors renderActive's own arithmetic; keeping it in one small function is
+// what stops the two from drifting. There is no band term any more — the band is
+// inside the region, which is the whole point of §13.2's three-region table.
 func narrationLeftover(w state.World, v *UIState, cols, rows int, now time.Time, pal Palette) int {
 	width := frameWidth(v, cols)
 	fixed := 2 + 2
-	if entries := bandEntries(w, v, now); len(entries) > 0 || v.Digest != nil {
-		bandLines := renderBand(entries, v, width, v.SelID == selBand, pal)
-		if maxBand := rows - 12; len(bandLines) > maxBand && maxBand >= 3 {
-			bandLines = bandLines[:maxBand]
-		}
-		fixed += len(bandLines) + 1
-	}
 	if len(w.Contentions) > 0 {
 		fixed += len(renderContention(w, v, width, pal))
 	}
@@ -203,23 +233,17 @@ func rule(width int, pal Palette) []seg {
 }
 
 // renderActive renders the live tree screen (§3.1).
+//
+// Three regions, in §13.2's order: header, tree, then the standup (which IS the
+// alert band) and the commentary. Nothing fixed-height sits above the tree, so
+// the tree's first row is always y=2 — that is the §13.4 invariant, held by
+// construction rather than by arithmetic.
 func renderActive(w state.World, v *UIState, width, rows int, now time.Time, pal Palette) *frame {
 	f := &frame{}
 	entries := bandEntries(w, v, now)
-	bandPresent := len(entries) > 0 || v.Digest != nil
 
 	f.add("", headerLine(w, v, width, now, pal, len(entries)))
 	f.add("", rule(width, pal))
-
-	var bandLines [][]seg
-	if bandPresent {
-		bandLines = renderBand(entries, v, width, v.SelID == selBand, pal)
-		// A full band on a short pane must not push the tree and footer off
-		// screen: clip it, keeping the chip and the oldest entry (§3.7.6).
-		if maxBand := rows - 12; len(bandLines) > maxBand && maxBand >= 3 {
-			bandLines = bandLines[:maxBand]
-		}
-	}
 
 	var inspLines [][]seg
 	if v.InspectorOpen {
@@ -231,24 +255,47 @@ func renderActive(w state.World, v *UIState, width, rows int, now time.Time, pal
 		contLines = renderContention(w, v, width, pal)
 	}
 
-	// header(2) + band(+rule) + contention + inspector + footer rule + footer
+	// header(2) + contention + inspector + footer rule + footer
 	fixed := 2 + len(contLines) + len(inspLines) + 2
-	if len(bandLines) > 0 {
-		fixed += len(bandLines) + 1
+	// The tree and the region below it share what is left. narrationPlan decides
+	// the split, and the tree is rendered inside it — see the function for the
+	// rule.
+	plan := narrationPlan(w, v, width, rows-fixed, now, pal)
+	var narrLines [][]seg
+	var narrIDs []string
+	if plan.alertRows > 0 {
+		narrLines, narrIDs = renderAlertOnly(entries, v.Digest, v, width, plan.alertRows, pal)
+	} else {
+		narrLines, narrIDs = renderNarration(w, v, plan.mode, width, now, pal)
 	}
-	// The tree and the narration share what is left. narrationPlan decides the
-	// split, and the tree is rendered inside it — see the function for the rule.
-	voice, tree := narrationPlan(w, v, width, rows-fixed, now, pal)
-	narrLines := renderNarration(w, v, voice, width, now, pal)
+	tree := plan.tree
 
-	for _, ln := range bandLines {
-		f.add(selBand, ln)
+	// Last-resort clips, in priority order. renderTree cannot go below main's own
+	// block plus one agent's, and renderInspector has a fixed height of its own, so
+	// on a very short pane either can hand back more lines than the budget it was
+	// given — and the excess used to push the footer, which carries the toasts and
+	// every key hint, straight off the bottom of the frame.
+	//
+	// minTreeRows is the floor the region leaves the tree; this is the matching
+	// ceiling. The tree gives up rows first, then the inspector; the footer never
+	// does, because a pane whose keys have scrolled away is a pane you cannot get
+	// out of.
+	treeLines, treeIDs := tree.lines, tree.ids
+	// chrome is the header and the footer with their rules: the two rows at each
+	// end that every active frame owns unconditionally.
+	const chrome = 4
+	rest := rows - chrome - len(narrLines) - len(contLines)
+	if rest < 0 {
+		rest = 0
 	}
-	if len(bandLines) > 0 {
-		f.add("", rule(width, pal))
+	if len(treeLines) > rest {
+		treeLines, treeIDs = treeLines[:rest], treeIDs[:rest]
 	}
-	for i, ln := range tree.lines {
-		f.add(tree.ids[i], ln)
+	if rest -= len(treeLines); len(inspLines) > rest {
+		inspLines = inspLines[:rest]
+	}
+	for i, ln := range treeLines {
+		f.add(treeIDs[i], ln)
 	}
 	f.addAll("", contLines)
 
@@ -257,9 +304,16 @@ func renderActive(w state.World, v *UIState, width, rows int, now time.Time, pal
 	for i := 0; i < pad; i++ {
 		f.add("", nil)
 	}
-	// Narration lines carry no row id: they are not selectable and a click on
-	// prose must not move the tree's selection (§5.1 lists no such target).
-	f.addAll("", narrLines)
+	// Only the band's own lines inside the region carry a row id (selBand); prose
+	// carries none, because §5.1 lists no such target and a click on a sentence
+	// must not move the tree's selection.
+	for i, ln := range narrLines {
+		id := ""
+		if i < len(narrIDs) {
+			id = narrIDs[i]
+		}
+		f.add(id, ln)
+	}
 	f.addAll(v.SelID, inspLines)
 	f.add("", rule(width, pal))
 	f.add("", footerLine(w, v, width, now, pal, tree.scrollInfo))

@@ -12,7 +12,7 @@ import (
 
 // The narration region (§13.2, §13.4).
 //
-// Two facts about this file matter more than anything in it.
+// Three facts about this file matter more than anything in it.
 //
 // **It is fixed-height.** renderNarration returns exactly narrationHeight(mode)
 // lines for every world, every scene, every voice mode and every sentence
@@ -23,10 +23,15 @@ import (
 //
 // **It sits BELOW the tree.** That is what makes the §13.4 invariant true by
 // construction rather than by arithmetic: the tree's first row is fixed by the
-// header and the alert band, so turning the voice on, cycling it, or writing a
-// 200-character sentence cannot move a single tree row. Putting narration above
-// the tree would move every row every time the mode changed, and no amount of
+// header alone, so turning the voice on, cycling it, writing a 200-character
+// sentence — or an alert arriving — cannot move a single tree row. Putting any
+// of this above the tree would move every row every time, and no amount of
 // careful height accounting would fix it.
+//
+// **The standup IS the alert band** (§3.7, §3.19), not a region under one. Its
+// sticky chip carries the band's identity and its body opens with the band's
+// content, which band.go composes; there is no second fixed-height region above
+// the tree, and the ask is therefore stated exactly once per frame.
 
 // VoiceMode is the §13.2 cycle: standup + commentary → standup → off.
 type VoiceMode string
@@ -168,7 +173,16 @@ func (v *UIState) advanceNarration(w state.World, now time.Time, width int) []na
 	// That silently defeated the guess→exact correction §13.1 explicitly keeps.
 	// The pending set is published by the renderer instead, once a frame that
 	// actually contains those names has been produced.
-	v.pendingNamed = append(v.pendingNamed, r.Named...)
+	//
+	// It is a SET. A name can stay pending for the whole run (the standup keeps
+	// naming an agent the reader never scrolls to), and appending it once per
+	// machine update would grow the slice for as long as the run lasts.
+	for _, id := range r.Named {
+		if v.pendingName(id) || (v.Slugs != nil && v.Slugs.Published(id)) {
+			continue
+		}
+		v.pendingNamed = append(v.pendingNamed, id)
+	}
 
 	// Hold a paused view still. CommScroll counts rendered lines up from the
 	// bottom, so appending entries would otherwise slide the window out from
@@ -215,48 +229,96 @@ func chipStyle(st narrate.Standup, pal Palette) Style {
 }
 
 // renderNarration renders the whole narration region: exactly
-// narrationHeight(mode) lines, rules included.
-func renderNarration(w state.World, v *UIState, mode VoiceMode, width int, now time.Time, pal Palette) [][]seg {
+// narrationHeight(mode) lines, rules included, plus the row id for each line.
+//
+// Only the chip and the alert block carry an id (selBand): they are the band, so
+// a click on them selects it the way a click on the old band region did. Prose
+// carries none — §5.1 lists no such target, and a click on a sentence must not
+// move the tree's selection.
+func renderNarration(w state.World, v *UIState, mode VoiceMode, width int, now time.Time, pal Palette) ([][]seg, []string) {
 	if mode == VoiceOff {
-		return nil
+		return nil, nil
 	}
 	st := narrateNow(w, v, now)
-	out := renderStandup(st, v, mode, width, pal)
+	entries := bandEntries(w, v, now)
+	out, ids, prose := renderStandup(st, entries, v, mode, width, pal)
 	if mode == VoiceFull {
-		out = append(out, renderCommentary(v, width, pal)...)
+		comm := renderCommentary(v, width, pal)
+		for _, ln := range comm {
+			out, ids = append(out, ln), append(ids, "")
+		}
+		prose += segsLinesText(comm)
 	}
 	// This frame is the one the reader sees, so this is where a name becomes
-	// "published" and its slug freezes (§13.1(a)). Names the narrator produced
-	// for a region that was never drawn stay correctable.
-	v.publishDrawnNames(v.pendingNamed)
+	// "published" and its slug freezes (§13.1(a)). Only the names this frame's
+	// PROSE actually contains are published; everything else the narrator produced
+	// stays pending and correctable.
+	//
+	// "The region was drawn" is not the same question and was the bug: in standup
+	// mode the commentary is not rendered at all, and the standup body is clipped
+	// to its first few lines, so publishing the whole pending set froze six slugs
+	// off one frame that showed one of them.
+	//
+	// The band's rows are excluded along with the tree's, for the same reason
+	// renderAlertOnly publishes nothing: they print a slug from the slug table
+	// exactly as a row does, on the first frame the alert exists, so treating them
+	// as prose would make the guess→exact correction §13.1 keeps impossible to
+	// ever apply.
+	v.publishDrawnNames(w, prose)
 	// Height is asserted here rather than trusted: a padding bug in either
 	// region would otherwise move the footer, which is the failure §13.4 exists
 	// to prevent. Clipping and padding to the declared height makes the
 	// guarantee unconditional.
 	want := narrationHeight(mode)
 	for len(out) < want {
-		out = append(out, nil)
+		out, ids = append(out, nil), append(ids, "")
 	}
-	return out[:want]
+	return out[:want], ids[:want]
 }
 
 // renderStandup draws the standup region: rule, sticky chip, scrolling body,
-// sticky action.
-func renderStandup(st narrate.Standup, v *UIState, mode VoiceMode, width int, pal Palette) [][]seg {
+// sticky action. The chip and the alert lines are the band (§3.7), so they take
+// the selBand id; everything else is prose.
+//
+// The third return is the PROSE it drew, as plain text: the body lines that are
+// sentences rather than band rows. renderNarration needs it to publish exactly
+// the names this frame put in front of the reader (§13.1(a)).
+func renderStandup(st narrate.Standup, entries []bandEntry, v *UIState, mode VoiceMode, width int, pal Palette) ([][]seg, []string, string) {
 	out := [][]seg{rule(width, pal)}
+	ids := []string{""}
+	var prose strings.Builder
 
-	out = append(out, composeLR(
-		line(seg{st.Chip, chipStyle(st, pal)}),
-		line(seg{st.Clock, pal.Deep}), width))
+	alerting := bandAlerting(entries, v.Digest)
+	chip, right := bandChip(st, entries, v.Digest)
+	head := composeLR(
+		line(seg{chip, bandChipStyle(st, entries, v.Digest, pal)}),
+		line(seg{right, pal.Deep}), width)
+	if alerting && v.SelID == selBand {
+		head = reverseLine(head)
+	}
+	out, ids = append(out, head), append(ids, bandID(alerting))
 
-	body := standupBody(st, width, pal)
+	body := standupBody(st, entries, v.Digest, width, pal)
+	push := func(b bodyLine) {
+		id := ""
+		if b.band {
+			// The band's own lines, and only those: a click on a SENTENCE about
+			// the ask must not move the selection, however much it is about the
+			// ask. selBand still comes from selectionIDs; this is the hit test.
+			id = selBand
+		} else {
+			prose.WriteString(segsText(b.segs))
+			prose.WriteByte('\n')
+		}
+		out, ids = append(out, b.segs), append(ids, id)
+	}
 	avail := standupBodyRows(mode)
 	if len(body) <= avail {
 		for _, b := range body {
-			out = append(out, b.segs)
+			push(b)
 		}
 		for i := len(body); i < avail; i++ {
-			out = append(out, nil)
+			out, ids = append(out, nil), append(ids, "")
 		}
 	} else {
 		// Clipped. The last row is spent on stating the clip rather than on one
@@ -272,13 +334,118 @@ func renderStandup(st narrate.Standup, v *UIState, mode VoiceMode, width int, pa
 			off = 0
 		}
 		for _, b := range body[off : off+show] {
-			out = append(out, b.segs)
+			push(b)
 		}
-		out = append(out, truncSegs(line(seg{standupClipHint(mode, body, off, show), pal.Deep}), width))
+		out, ids = append(out, truncSegs(line(seg{standupClipHint(mode, body, off, show), pal.Deep}), width)), append(ids, "")
 	}
 
-	out = append(out, truncSegs(line(seg{st.Action.Text, toneStyle(st.Action.Tone, pal)}), width))
-	return out
+	// The sticky action. With an alert outstanding it is §3.12's exact copy for
+	// the primary entry (permission or stall); otherwise it is the narrator's
+	// own closing line, which §13.2 requires to always be present.
+	action, tone := st.Action.Text, st.Action.Tone
+	if a := bandAction(entries); a != "" {
+		action, tone = a, narrate.ToneAlert
+	}
+	out, ids = append(out, truncSegs(line(seg{action, toneStyle(tone, pal)}), width)), append(ids, "")
+	return out, ids, prose.String()
+}
+
+// bandID is the row id for a band line: selBand while there is a band, "" when
+// the chip is the narrator's neutral run chip and there is nothing to select.
+func bandID(alerting bool) string {
+	if alerting {
+		return selBand
+	}
+	return ""
+}
+
+// alertOnlyRows is the height the compact alert block WANTS: the rule, the chip,
+// the whole band body and the §3.12 action line.
+//
+// This is the band's degenerate form, for a pane whose tree needs every row it
+// has. It is NOT a second region — it is what the standup shrinks to when the
+// prose cannot be afforded, and it is drawn in the same slot below the tree, so
+// the §13.4 invariant is untouched. alertOnlyMin is what it will accept: the chip
+// plus the oldest entry, which names the agent, its kind and its wait.
+const alertOnlyMin = 2
+
+func alertOnlyRows(entries []bandEntry, dig *digest, width int, pal Palette) int {
+	if !bandAlerting(entries, dig) {
+		return 0
+	}
+	n := 2 + len(bandBody(entries, dig, width, pal))
+	if bandAction(entries) != "" {
+		n++
+	}
+	return n
+}
+
+// renderAlertOnly draws the compact alert block in exactly rows lines: rule,
+// chip, as much of the band body as fits (oldest entry first, §3.7.6), then the
+// §3.12 action line.
+//
+// What it gives up when it must, in order: the newer entries and the folded-ghost
+// count first, then the separator rule (the region is already bracketed by the
+// footer's own rule below it, so the separator is the one nicety here), then the
+// action line. Never the chip, the oldest entry, or that entry's command —
+// §3.7 puts "who is blocked" and "the exact command" ahead of everything else,
+// and bandCoreRows is that priority written down.
+//
+// It deliberately does not publish names (§13.1(a)): a slug here comes from the
+// slug table exactly as a tree row's does, and no prose naming the agent was
+// drawn, so the guess→exact correction stays available.
+func renderAlertOnly(entries []bandEntry, dig *digest, v *UIState, width, rows int, pal Palette) ([][]seg, []string) {
+	if rows < alertOnlyMin || !bandAlerting(entries, dig) {
+		return nil, nil
+	}
+	body := bandBody(entries, dig, width, pal)
+	action := bandAction(entries)
+
+	// The chip plus the oldest entry's core rows are paid for first; everything
+	// else competes for what is left.
+	mandatory := 1 + bandCoreRows(entries)
+	if mandatory > rows {
+		mandatory = rows
+	}
+	spare := rows - mandatory
+	showAction := false
+	if action != "" && spare > 0 {
+		showAction, spare = true, spare-1
+	}
+	showRule := false
+	if spare > 0 {
+		showRule, spare = true, spare-1
+	}
+	bodyRows := mandatory - 1 + spare
+	if bodyRows > len(body) {
+		bodyRows = len(body)
+	}
+
+	var out [][]seg
+	var ids []string
+	if showRule {
+		out, ids = append(out, rule(width, pal)), append(ids, "")
+	}
+
+	chip, right := bandChip(narrate.Standup{}, entries, dig)
+	head := composeLR(
+		line(seg{chip, bandChipStyle(narrate.Standup{}, entries, dig, pal)}),
+		line(seg{right, pal.Deep}), width)
+	if v.SelID == selBand {
+		head = reverseLine(head)
+	}
+	out, ids = append(out, head), append(ids, selBand)
+
+	for _, b := range body[:bodyRows] {
+		out, ids = append(out, b.segs), append(ids, selBand)
+	}
+	if showAction {
+		out, ids = append(out, truncSegs(line(seg{action, pal.NeedsYou}), width)), append(ids, "")
+	}
+	for len(out) < rows {
+		out, ids = append(out, nil), append(ids, "")
+	}
+	return out[:rows], ids[:rows]
 }
 
 // standupClipHint names what was cut and how to see it.
@@ -317,21 +484,28 @@ func standupClipHint(mode VoiceMode, body []bodyLine, off, show int) string {
 }
 
 // bodyLine is one rendered standup line and the part it came from, so the clip
-// hint can say what it cut.
+// hint can say what it cut. band marks the lines that are the alert band itself
+// (§3.7) rather than prose about it: they are the only ones a click may select.
 type bodyLine struct {
 	segs []seg
 	part narrate.Part
+	band bool
 }
 
-// standupBody wraps the standup's sentences into rendered lines. Parts are not
-// separated by blank rows: §3.1 asks for tight leading, and a blank row in a
-// seven-row region costs a sentence.
-func standupBody(st narrate.Standup, width int, pal Palette) []bodyLine {
-	var out []bodyLine
+// standupBody is the scrolling middle of the region: the alert band first, then
+// the narrator's sentences. Parts are not separated by blank rows: §3.1 asks for
+// tight leading, and a blank row in a seven-row region costs a sentence.
+//
+// The band goes FIRST and the body is top-anchored, so the ask, its exact
+// command and its wait timer are what the reader sees without scrolling however
+// long the prose gets. §3.7 is the most important feature in the pane; the
+// sentences about it are not.
+func standupBody(st narrate.Standup, entries []bandEntry, dig *digest, width int, pal Palette) []bodyLine {
+	out := bandBody(entries, dig, width, pal)
 	for _, l := range st.Lines {
 		style := toneStyle(l.Tone, pal)
 		for _, wrapped := range wrapAll(l.Text, width) {
-			out = append(out, bodyLine{truncSegs(line(seg{wrapped, style}), width), l.Part})
+			out = append(out, bodyLine{truncSegs(line(seg{wrapped, style}), width), l.Part, false})
 		}
 	}
 	return out
@@ -546,15 +720,62 @@ func commentaryTotalLines(entries []narrate.Entry, width int) int {
 }
 
 // publishDrawnNames freezes the slugs of agents whose names reached a frame the
-// reader could actually see. renderNarration calls it with the names it just
-// drew; nothing else may freeze a name (§13.1(a), and see advanceNarration).
-func (v *UIState) publishDrawnNames(drawn []string) {
-	if v.Slugs == nil || len(drawn) == 0 {
+// reader could actually see, and leaves the rest pending. renderNarration calls
+// it with the prose it just drew; nothing else may freeze a name (§13.1(a), and
+// see advanceNarration).
+//
+// The gate is "this name is in that text", not "some region was drawn": a pending
+// id whose slug never made it into the drawn sentences — because the commentary
+// is hidden, because the standup body clipped it, or because its entry is outside
+// the log's window — is still correctable, which is the whole point of tracking
+// pending names at all.
+func (v *UIState) publishDrawnNames(w state.World, prose string) {
+	if v.Slugs == nil || len(v.pendingNamed) == 0 {
 		return
 	}
-	for _, id := range drawn {
-		v.Slugs.Publish(id)
+	// Quoted commands are removed first: a token inside the verbatim command an
+	// ask quotes is a shell token, not a reference to the agent that happens to
+	// share its name. narrate applies the same two rules to decide what its own
+	// text names, so the two ends of the handover agree.
+	text := narrate.StripQuoted(prose)
+	keep := v.pendingNamed[:0]
+	for _, id := range v.pendingNamed {
+		if narrate.Mentions(text, v.slugOf(w, id, "")) {
+			v.Slugs.Publish(id)
+			continue
+		}
+		keep = append(keep, id)
 	}
-	// Anything still pending was never drawn; it stays correctable.
-	v.pendingNamed = v.pendingNamed[:0]
+	v.pendingNamed = keep
+}
+
+// pendingName reports whether id is already waiting to be published.
+func (v *UIState) pendingName(id string) bool {
+	for _, p := range v.pendingNamed {
+		if p == id {
+			return true
+		}
+	}
+	return false
+}
+
+// segsText is the plain text of one rendered line, styles dropped.
+func segsText(segs []seg) string {
+	var b strings.Builder
+	for _, s := range segs {
+		b.WriteString(s.t())
+	}
+	return b.String()
+}
+
+// segsLinesText joins rendered lines into searchable text. The newline matters:
+// it is a token boundary, so a slug that ends one line and a word that starts the
+// next cannot be read as one name.
+func segsLinesText(lines [][]seg) string {
+	var b strings.Builder
+	for _, ln := range lines {
+		b.WriteString(segsText(ln))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }

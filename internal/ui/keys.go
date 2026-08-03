@@ -249,7 +249,11 @@ func (m *Model) pageKey(up bool) {
 		}
 	case m.voiceDrawn() == VoiceStandup:
 		st := narrateNow(m.world, m.v, m.clock)
-		total := len(standupBody(st, frameWidth(m.v, m.cols), m.pal))
+		width := frameWidth(m.v, m.cols)
+		// The band's lines are part of the body now, so the scroll extent must
+		// count them: without them ⇟ stopped short of the prose whenever an ask
+		// was outstanding.
+		total := len(standupBody(st, bandEntries(m.world, m.v, m.clock), m.v.Digest, width, m.pal))
 		show := standupBodyRows(VoiceStandup) - 1
 		max := total - show
 		if max < 0 {
@@ -274,15 +278,16 @@ func (m *Model) pageKey(up bool) {
 
 // voiceDrawn is the mode actually on screen, which is what the page keys must
 // follow: paging a region the geometry withheld would move an invisible view.
+// A pane showing the band alone reports VoiceOff — there is no prose to page.
 func (m *Model) voiceDrawn() VoiceMode {
 	if idlePhase(m.world) || m.cols < 40 || m.rows < 12 {
 		return VoiceOff
 	}
 	top := m.v.ScrollTop
-	mode, _ := narrationPlan(m.world, m.v, frameWidth(m.v, m.cols),
+	plan := narrationPlan(m.world, m.v, frameWidth(m.v, m.cols),
 		narrationLeftover(m.world, m.v, m.cols, m.rows, m.clock, m.pal), m.clock, m.pal)
 	m.v.ScrollTop = top
-	return mode
+	return plan.mode
 }
 
 // advanceNarration folds the current world into the narrator's memory. The Model

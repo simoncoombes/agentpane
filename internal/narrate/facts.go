@@ -39,14 +39,20 @@ type facts struct {
 	// demonstrably in a call, so silence is explained.
 	openLong []state.Agent
 
-	// parked is what "n parked behind that keystroke" counts: agents that
-	// cannot proceed until the user answers.
+	// parked is what "n parked behind that keystroke" counts: agents that cannot
+	// proceed until the user answers and are not themselves the thing being
+	// answered.
 	//
-	// It is ask + queued, and deliberately NOT stuck. A stuck agent is not
-	// waiting on the keystroke — it is waiting on nothing anyone can identify —
-	// and folding it in would inflate the one number the escalation ladder
-	// leans on. main's line 2 (rowRight's blockedOn) counts the same two states
-	// for the same reason, so the tree and the prose cannot disagree.
+	// It is the QUEUED agents. The asking ones are excluded because they are the
+	// keystroke, not a queue behind it: counting them made a lone ask report "1
+	// agent is parked behind that keystroke" with nothing whatsoever behind it,
+	// and made patience()'s "Nothing else is parked behind it" branch unreachable
+	// for as long as any ask existed. It is deliberately NOT stuck either — a
+	// stuck agent is waiting on nothing anyone can identify, and folding it in
+	// would inflate the one number the escalation ladder leans on.
+	//
+	// riskLines' "n agents are parked behind that answer" counts len(queued) too,
+	// so the two sentences agree by construction rather than by coincidence.
 	parked int
 
 	// tokens is the run total; agentTokens is the sum over rows, kept separate
@@ -127,7 +133,7 @@ func newFacts(w state.World, now time.Time, names *namer) *facts {
 			}
 		}
 	}
-	f.parked = len(f.asking) + len(f.queued)
+	f.parked = len(f.queued)
 	// The run aggregate is the authority on the total when it exists (§2.8): it
 	// counts main plus every agent including the ones that have already decayed
 	// off the tree, so summing rows would under-report a long run.
@@ -180,6 +186,22 @@ func (f *facts) scene() Scene {
 	}
 }
 
+// allAsksResolving reports whether every outstanding ask has already been
+// answered as far as the events can tell (§3.7.8). An asking AGENT with no ask
+// record — the scene is reachable that way — is not resolving, so it holds the
+// keys on the action line.
+func (f *facts) allAsksResolving() bool {
+	if len(f.asks) == 0 || len(f.asking) > len(f.asks) {
+		return false
+	}
+	for _, a := range f.asks {
+		if !a.Resolving {
+			return false
+		}
+	}
+	return true
+}
+
 // liveContention reports whether any recorded collision still has a participant
 // running. A collision whose writers have all returned is history: the damage
 // either happened or it did not, and there is nothing left to watch. Treating it
@@ -188,11 +210,36 @@ func (f *facts) scene() Scene {
 // line), it just stops shouting about it.
 func (f *facts) liveContention() bool {
 	for _, c := range f.w.Contentions {
-		if !f.allReturned(c.AgentIDs) {
+		if f.hasLiveWriter(c.AgentIDs) {
 			return true
 		}
 	}
 	return false
+}
+
+// hasLiveWriter is the SAME classification splitWriters uses, so the scene, the
+// closing action and the risk sentence cannot disagree about whether a collision
+// still has a live participant — the action promising a writer to inspect while
+// the risk line has none to name would be the §13.2 action pointing at nothing.
+//
+// It resolves no names on purpose: scene() runs before any sentence is built, and
+// asking the namer here would mark every contention participant as one this frame
+// refers to (see namedIn) whether or not it is ever mentioned.
+func (f *facts) hasLiveWriter(ids []string) bool {
+	for _, id := range ids {
+		if !f.writerReturned(id) {
+			return true
+		}
+	}
+	return false
+}
+
+// writerReturned is that classification for ONE participant. A writer the World no
+// longer carries is not returned: the events do not say it came back, so neither
+// the scene nor the prose may.
+func (f *facts) writerReturned(id string) bool {
+	a, ok := f.agent(id)
+	return ok && a.Status == state.StatusDone
 }
 
 // since renders an elapsed duration the way the rest of the pane does (§2.6),
@@ -283,9 +330,50 @@ func (f *facts) slugsOf(agents []state.Agent) []string {
 	return out
 }
 
-// askWhat names what an ask is asking for, from the payload kind (§3.7.1). It
-// quotes the command verbatim rather than paraphrasing: the reader's next action
-// is to approve that exact string.
+// askGist names what an ask needs WITHOUT reprinting the command — the standup's
+// own sentences use this, and only the commentary quotes the bytes.
+//
+// §3.7 gives the exact string to the band's own row, verbatim, because that row
+// is what the reader approves. A sentence four rows under it that repeats the
+// same string states the ask twice inside one region, which is exactly the
+// duplication that merging the band into the standup existed to remove. So the
+// prose says what KIND of answer is wanted and leaves the string to the row that
+// owns it — the mock does the same thing in its own words ("wants to clear it",
+// never the rm -rf).
+//
+// "one" is load-bearing: it says the thing the reader most wants to know that
+// the row does not already show, which is that this is a single decision.
+func (f *facts) askGist(a state.Ask) string {
+	switch a.Kind {
+	case "command":
+		if a.Tool != "" {
+			return "permission to run one " + a.Tool + " command"
+		}
+		return "permission to run one command"
+	case "file_write":
+		return "permission to write one file"
+	case "network":
+		return "network access"
+	case "mcp":
+		if a.Tool != "" {
+			return "permission to use " + a.Tool
+		}
+		return "permission to use an MCP tool"
+	default:
+		if a.Tool != "" {
+			return "permission to use " + a.Tool
+		}
+		return "your answer"
+	}
+}
+
+// askWhat names what an ask is asking for, from the payload kind (§3.7.1),
+// quoting the command verbatim. It is the COMMENTARY's form: a log entry is a
+// timestamped record of what was asked, it is the only place the approved bytes
+// survive once the band has cleared, and it is what keeps stripQuoted's job real
+// (a token inside a verbatim command is a shell token, not an agent).
+//
+// The standup uses askGist instead. See it for why.
 func (f *facts) askWhat(a state.Ask) string {
 	cmd := strings.TrimSpace(a.Command)
 	switch a.Kind {
@@ -333,14 +421,25 @@ func quoteCmd(s string) string {
 
 // namer resolves ids to display slugs once per frame and remembers the order it
 // saw them in, so Result.Named is stable.
+//
+// It also records WHICH ids the composer asked about. That set is the honest
+// answer to "whose name does this frame refer to" — deriving it from the rendered
+// text alone cannot distinguish an agent's slug from the same characters
+// appearing inside another slug or inside a quoted command, and Result.Named
+// freezes every id it reports. See namedIn.
 type namer struct {
 	byID  map[string]string
+	used  map[string]bool
 	order []string
 	fn    func(state.Agent) string
 }
 
 func newNamer(w state.World, fn func(state.Agent) string) *namer {
-	n := &namer{byID: make(map[string]string, len(w.Agents)), fn: fn}
+	n := &namer{
+		byID: make(map[string]string, len(w.Agents)),
+		used: make(map[string]bool, len(w.Agents)),
+		fn:   fn,
+	}
 	for _, a := range w.Agents {
 		n.order = append(n.order, a.ID)
 		n.byID[a.ID] = n.resolve(a)
@@ -360,16 +459,20 @@ func (n *namer) resolve(a state.Agent) string {
 	return a.ID
 }
 
+// of names an agent from its own record. Asking is what marks the id as one this
+// frame refers to (see namer's doc comment).
 func (n *namer) of(a state.Agent) string {
+	n.used[a.ID] = true
 	if s, ok := n.byID[a.ID]; ok && s != "" {
 		return s
 	}
 	return n.resolve(a)
 }
 
-// byID names an agent referred to from somewhere other than its own row (an
+// hinted names an agent referred to from somewhere other than its own row (an
 // ask, a contention), falling back to a supplied hint.
 func (n *namer) hinted(id, hint string) string {
+	n.used[id] = true
 	if s, ok := n.byID[id]; ok && s != "" {
 		return s
 	}

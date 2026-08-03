@@ -1,14 +1,5 @@
 AGENTS 8[90m · 3f9c[0m                                    [1m⚑ 2 NEEDS YOU[0m
 [90m────────────────────────────────────────────────────────────────[0m
-[1;7m⚑ NEEDS YOU[0m                                                     
-[1mfix-ts2345-fallout[0m  permission[1m ×3[0m                            [1m52s[0m
-run: rm -rf node_modules/.cache && pnpm rebuild
-[2;90manswer in the left pane — ⏎ jumps focus[0m
-[90m+2 retry agents folded[0m
-[1mtypecheck-works…[0m  stalled                                  [1m2m50s[0m
-no call open · silent 2m50s
-[2;90mo opens the log · y yanks the command[0m
-[90m────────────────────────────────────────────────────────────────[0m
 [1m◍[0m main[90m  refactor auth[0m                                       [90m112k[0m
 [90m│ [0mholding 2 agents · waiting on you                           [2;90m5s[0m
 [90m├─╮[0m
@@ -56,17 +47,26 @@ no call open · silent 2m50s
 [90m  audit-users-schema + write-email-index[0m
 
 
+
+
+
+
+
+
+
+
+
 [90m────────────────────────────────────────────────────────────────[0m
 [1;7m⚑ NEEDS YOU[0m                                                 [2;90m5:00[0m
+[1mfix-ts2345-fallout[0m  permission[1m ×3[0m                            [1m52s[0m
+run: rm -rf node_modules/.cache && pnpm rebuild
+[90m+2 retry agents folded[0m
+[1mtypecheck-works…[0m  stalled[90m · no call open[0m                   [1m2m50s[0m
+[90mo opens the log · y yanks the command[0m
 [1mYou're the blocker. fix-ts2345-fallout is waiting on permission[0m
-[1mto run `rm -rf node_modules/.cache && pnpm rebuild`, and nothing[0m
-[1mit does next happens without you.[0m
-52s waiting, which is 17% of its whole life. Nothing's lost yet.
-[90mThe same request has arrived 3 times under fresh ids and is[0m
-[90mfolded into one entry, so this is one decision rather than 3 —[0m
-[90mthe platform doesn't emit the signal that would settle it.[0m
-typecheck-works… has been silent 2m50s with no call open, which
-[2;90m↕ 1–8 of 16 · ⇞⇟ · off screen: risk, state[0m
+[1mto run one Bash command, and nothing it does next happens[0m
+[1mwithout you.[0m
+[2;90m↕ 1–8 of 21 · ⇞⇟ · off screen: must, risk, state[0m
 [1m▸ answer in the left pane — ⏎ jumps focus[0m
 [90m────────────────────────────────────────────────────────────────[0m
 [2;90mj/k ␣ ⏎ f o y · n voice · t tokens[0m                  [2;90mtoken rate →[0m

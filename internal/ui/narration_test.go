@@ -129,10 +129,14 @@ func TestNarrationHeightIsFixedPerMode(t *testing.T) {
 						w.Agents = agents
 					}
 					v.advanceNarration(w, demoNow(), width)
-					lines := renderNarration(w, v, mode, width, demoNow(), NewPalette(2, false))
+					lines, ids := renderNarration(w, v, mode, width, demoNow(), NewPalette(2, false))
 					if len(lines) != narrationHeight(mode) {
 						t.Errorf("%s/%s/%d/long=%v: %d lines, want %d",
 							name, mode, width, long, len(lines), narrationHeight(mode))
+					}
+					if len(ids) != len(lines) {
+						t.Errorf("%s/%s/%d: %d row ids for %d lines",
+							name, mode, width, len(ids), len(lines))
 					}
 					for i, ln := range lines {
 						if segsWidth(ln) > width {
@@ -166,31 +170,34 @@ func TestNarrationNeverOverflowsTheFrame(t *testing.T) {
 	}
 }
 
-// The geometry rule, stated as a test: the tree wins. Narration is withheld
-// wherever reserving it would cost the tree a row or an activity line, and it
-// appears as soon as the pane can afford it.
+// The geometry rule, stated as a test: the PROSE is withheld wherever reserving
+// it would cost the tree a row or an activity line, and it comes back as soon as
+// the pane can afford it. What is never withheld is the band — that is
+// TestTheBandSurvivesEveryHeight below.
 func TestTreeWinsWhenThereIsNoRoomForBoth(t *testing.T) {
 	m, events := demoMachine(t)
-	drawn := func(rows int) VoiceMode {
+	plan := func(rows int) narrPlan {
 		v, w := demoView(t, m, events)
 		v.Voice = VoiceFull
 		leftover := narrationLeftover(w, v, 64, rows, demoNow(), NewPalette(2, false))
-		mode, _ := narrationPlan(w, v, 64, leftover, demoNow(), NewPalette(2, false))
-		return mode
+		return narrationPlan(w, v, 64, leftover, demoNow(), NewPalette(2, false))
 	}
-	// The demo's tree needs the whole of a 44-row pane, so the voice yields.
+	drawn := func(rows int) VoiceMode { return plan(rows).mode }
+
+	// The demo's tree needs the whole of a 44-row pane, so the prose yields and
+	// the region keeps the band alone.
 	if got := drawn(44); got != VoiceOff {
 		t.Errorf("44 rows: voice=%s, want off — the tree needs every row", got)
 	}
-	// Grow the pane and the regions come back, cheapest first.
-	if got := drawn(60); got != VoiceStandup {
-		t.Errorf("60 rows: voice=%s, want standup", got)
+	if got := plan(44).alertRows; got < 3 {
+		t.Errorf("44 rows: the band got %d rows — §3.20 puts it at level 1, always", got)
 	}
+	// Grow the pane and the prose comes back.
 	if got := drawn(72); got != VoiceFull {
 		t.Errorf("72 rows: voice=%s, want full", got)
 	}
-	// And the ladder only ever loses regions — it never skips from full to off
-	// while the standup would have fitted.
+	// The ladder only ever loses regions — it never skips from full to off while
+	// the standup would have fitted.
 	for rows := 30; rows <= 90; rows++ {
 		mode := drawn(rows)
 		if mode == VoiceOff {
@@ -198,6 +205,42 @@ func TestTreeWinsWhenThereIsNoRoomForBoth(t *testing.T) {
 		}
 		if mode == VoiceFull && drawn(rows-1) == VoiceOff && rows > 30 {
 			t.Errorf("rows=%d jumped from off straight to full", rows)
+		}
+	}
+}
+
+// §3.20 level 1: "the band in the pane — always". The standup carries the band
+// now, so a geometry that withholds the standup must still draw the band, and
+// the ask's own command must survive with it at every height the active screen
+// owns.
+func TestTheBandSurvivesEveryHeight(t *testing.T) {
+	m, events := demoMachine(t)
+	for _, mode := range []VoiceMode{VoiceFull, VoiceStandup, VoiceOff} {
+		for rows := 12; rows <= 50; rows++ {
+			v, w := demoView(t, m, events)
+			v.Voice = mode
+			v.advanceNarration(w, demoNow(), 64)
+			frame, _ := renderFrame(w, v, 64, rows, demoNow(), NewPalette(2, false))
+			plain := stripANSI(frame)
+			// The chip and the oldest entry are the floor: whoever is blocked is
+			// named, with its kind, its ×n and its wait, at every height.
+			if !strings.Contains(plain, copyBandNeedsYou) {
+				t.Errorf("voice=%s rows=%d: no ⚑ NEEDS YOU chip:\n%s", mode, rows, plain)
+			}
+			if !strings.Contains(plain, "fix-ts2345-fallout  permission ×3") {
+				t.Errorf("voice=%s rows=%d: the alert entry is gone:\n%s", mode, rows, plain)
+			}
+			// The exact command needs one more row than the entry line, and it is
+			// the very first thing the band buys with it — ahead of the separator,
+			// the action line, the folded ghosts, the second entry and every word
+			// of prose (bandCoreRows).
+			if rows >= 13 && !strings.Contains(plain, "run: rm -rf node_modules/.cache && pnpm rebuild") {
+				t.Errorf("voice=%s rows=%d: the exact command is gone:\n%s", mode, rows, plain)
+			}
+			// And the §3.12 action copy one row after that.
+			if rows >= 14 && !strings.Contains(plain, copyAskAction) {
+				t.Errorf("voice=%s rows=%d: the action copy is gone:\n%s", mode, rows, plain)
+			}
 		}
 	}
 }
@@ -417,7 +460,7 @@ func TestNarrationHonestAbsence(t *testing.T) {
 		Connected: true,
 	}
 	v.advanceNarration(w, demoNow(), 64)
-	lines := renderNarration(w, v, VoiceFull, 64, demoNow(), NewPalette(2, false))
+	lines, _ := renderNarration(w, v, VoiceFull, 64, demoNow(), NewPalette(2, false))
 	if len(lines) != narrationHeight(VoiceFull) {
 		t.Fatalf("%d lines, want %d", len(lines), narrationHeight(VoiceFull))
 	}
@@ -479,6 +522,83 @@ func TestNarrationFreezesTheNamesItSpeaks(t *testing.T) {
 	}
 	if late := v2.Slugs.LateName(spoken); late == "" {
 		t.Errorf("the late name was dropped instead of recorded")
+	}
+}
+
+// The freeze is per NAME, not per region. §13.1(a) exists so a slug the reader
+// has read never changes under them, which makes "was this name in the frame I
+// just drew" the only question that may publish one.
+//
+// "Was any region drawn" is a different question and was the bug: in standup mode
+// the commentary is never rendered and the standup body is clipped to its first
+// rows, so publishing the whole pending set froze six slugs off a frame that
+// showed one of them — and a late exact Task description could no longer correct a
+// placeholder nobody had ever read.
+func TestOnlyTheNamesThisFrameDrewAreFrozen(t *testing.T) {
+	m, events := demoMachine(t)
+
+	// Standup mode: the drawn prose is the first sentence and nothing else.
+	v, w := demoView(t, m, events)
+	v.Voice = VoiceStandup
+	v.advanceNarration(w, demoNow(), 64)
+	frame, _ := renderFrame(w, v, 64, 72, demoNow(), NewPalette(2, false))
+	plain := stripANSI(frame)
+	if !strings.Contains(plain, "You're the blocker. fix-ts2345-fallout") {
+		t.Fatalf("the standup's first sentence is not in the frame:\n%s", plain)
+	}
+
+	byName := map[string]string{}
+	for _, a := range w.Agents {
+		byName[v.slugFor(a)] = a.ID
+	}
+	spoken := byName["fix-ts2345-fallout"]
+	if spoken == "" {
+		t.Fatalf("the demo world no longer holds the ask agent: %v", byName)
+	}
+	if !v.Slugs.Published(spoken) {
+		t.Errorf("%s is named in the drawn sentence but was not frozen", spoken)
+	}
+	// Everything the narrator named into text this frame did not draw stays
+	// correctable — including the stall, whose slug IS on screen: it is on the
+	// band's row, which prints from the slug table exactly as a tree row does, and
+	// no sentence about it was drawn. renderAlertOnly does not publish for the
+	// same reason.
+	for _, slug := range []string{
+		"typecheck-works…", "run-auth-tests", "audit-users-schema",
+		"write-email-index", "document-constr…", "lint-and-format", "reviewer",
+	} {
+		id := byName[slug]
+		if id == "" {
+			t.Fatalf("the demo world no longer holds %q: %v", slug, byName)
+		}
+		if v.Slugs.Published(id) {
+			t.Errorf("%s (%s) was frozen without a sentence naming it in the frame", id, slug)
+		}
+		if got := v.Slugs.AssignExact(id, "an exact description arriving late"); got == slug {
+			t.Errorf("%s (%s) is no longer correctable: stayed %q", id, slug, got)
+		}
+	}
+
+	// The commentary is the other prose, and it publishes exactly what its window
+	// shows: the names in the visible entries freeze, the ones scrolled past it do
+	// not.
+	v2, w2 := demoView(t, m, events)
+	v2.Voice = VoiceFull
+	v2.advanceNarration(w2, demoNow(), 64)
+	frame2, _ := renderFrame(w2, v2, 64, 72, demoNow(), NewPalette(2, false))
+	plain2 := stripANSI(frame2)
+	_, log := splitAtCommentary(plain2)
+	for slug, id := range byName {
+		drawn := strings.Contains(squash(log), slug)
+		if drawn && !v2.Slugs.Published(id) {
+			t.Errorf("%s (%s) is in the drawn commentary but was not frozen", id, slug)
+		}
+		if !drawn && v2.Slugs.Published(id) {
+			t.Errorf("%s (%s) was frozen without appearing in any drawn prose:\n%s", id, slug, plain2)
+		}
+	}
+	if !strings.Contains(squash(log), "lint-and-format") {
+		t.Fatalf("the commentary window no longer names the returned agent:\n%s", log)
 	}
 }
 

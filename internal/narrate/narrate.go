@@ -29,6 +29,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/simoncoombes/agentpane/internal/state"
 )
@@ -96,6 +98,13 @@ const (
 	ChipClear = "✔ ALL CLEAR"
 	ChipEmpty = "◌ NOTHING YET"
 )
+
+// ActionResolving is the closing line for a band whose every ask has been
+// answered but whose outcome no event has confirmed (§3.7.8). internal/ui prints
+// the same words on the band's own action row (band.go's copyResolvingAction
+// aliases this constant), so the two layers cannot drift into telling the reader
+// two different things about the same state.
+const ActionResolving = "nothing needs you — waiting on the event that confirms it"
 
 // Hedges. An inferred sentence is built by infer(), which appends one of these,
 // so the marking cannot be forgotten at a call site (§3.14: mark inference
@@ -318,8 +327,27 @@ func inferEntry(key string, at time.Duration, tone Tone, claim, hedge string) En
 	return Entry{Key: key, At: at, Tone: tone, Text: claim + " — " + hedge + ".", Inferred: true}
 }
 
-// namedIn collects the agent ids whose slug appears in the frame's text, in
-// World order so the result is deterministic.
+// namedIn collects the agent ids this frame's text actually names, in World order
+// so the result is deterministic.
+//
+// Naming an id here FREEZES its slug for the rest of the run (§13.1(a)), so a
+// false positive is not cosmetic: it pins a name the reader never saw and blocks
+// the one correction the slug table is allowed to make. A plain substring search
+// produced two of them, and the fix is two independent gates that a name has to
+// pass:
+//
+//   - The composer asked for it. namer records every id whose name it handed to a
+//     template, so a slug that merely OCCURS in the text — as a fragment of
+//     another agent's slug, or as a token inside a verbatim command — is not
+//     mistaken for a reference to that agent.
+//   - The name is in the frame. `used` alone would over-report: a candidate entry
+//     that was already said, or a risk line dropped by riskCap, resolves a name
+//     that never reaches the reader.
+//
+// The two are complementary — one catches "in the text but not referred to", the
+// other "referred to but not rendered" — and mentions() supplies the word
+// boundaries and the backtick exclusion that make the first gate's text test
+// exact rather than approximate.
 func namedIn(st Standup, fresh []Entry, names *namer) []string {
 	var b strings.Builder
 	for _, l := range st.All() {
@@ -330,13 +358,140 @@ func namedIn(st Standup, fresh []Entry, names *namer) []string {
 		b.WriteString(e.Text)
 		b.WriteByte('\n')
 	}
-	text := b.String()
+	text := stripQuoted(b.String())
 	var out []string
 	for _, id := range names.order {
-		if slug := names.byID[id]; slug != "" && strings.Contains(text, slug) {
+		slug := names.byID[id]
+		if slug == "" || !names.used[id] {
+			continue
+		}
+		if mentions(text, slug) {
 			out = append(out, id)
 		}
 	}
+	return out
+}
+
+// Mentions and StripQuoted are the two text rules namedIn rests on, exported for
+// the other half of the same handover: internal/ui decides which of the names the
+// narrator produced actually reached the drawn frame (§13.1(a)), and it has to ask
+// that question exactly the way this package answered it — whole tokens only, and
+// never inside a verbatim command.
+func Mentions(text, slug string) bool { return mentions(text, slug) }
+
+// StripQuoted removes backtick-quoted spans from text. See stripQuoted.
+func StripQuoted(s string) string { return stripQuoted(s) }
+
+// mentions reports whether slug appears in text as a whole token. A substring hit
+// is not a mention: "email-index" contains "email", and freezing the agent called
+// email because a DIFFERENT agent's slug happens to contain it names an agent the
+// reader never read.
+func mentions(text, slug string) bool {
+	if slug == "" {
+		return false
+	}
+	for i := 0; i+len(slug) <= len(text); {
+		j := strings.Index(text[i:], slug)
+		if j < 0 {
+			return false
+		}
+		p := i + j
+		if boundedLeft(text, p) && boundedRight(text, p+len(slug)) {
+			return true
+		}
+		i = p + 1
+	}
+	return false
+}
+
+// isSlugRune is the slug alphabet: internal/slug builds a name from unicode
+// letters and digits joined with hyphens, and marks a truncation with "…". The
+// ellipsis counts as part of the token, which is what keeps the untruncated
+// "typecheck-works" from matching inside the truncated "typecheck-works…".
+func isSlugRune(r rune) bool {
+	return r == '-' || r == '_' || r == '…' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// boundedLeft/boundedRight are \b, evaluated only on the sides where the slug's
+// own edge is part of the alphabet — a slug ending in "…" imposes no constraint
+// to its right beyond the ellipsis itself.
+func boundedLeft(text string, at int) bool {
+	if at == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(text[:at])
+	return !isSlugRune(r)
+}
+
+func boundedRight(text string, at int) bool {
+	if at >= len(text) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(text[at:])
+	return !isSlugRune(r)
+}
+
+// stripQuoted removes backtick-quoted spans before the text is searched for
+// names. quoteCmd is the only thing in this package that emits a backtick, so
+// what comes out is exactly the verbatim command the reader is being asked to
+// approve — and a token inside a shell command is a shell token, not a reference
+// to an agent that happens to share its name.
+//
+// Each span leaves a space behind so the token boundaries either side of it
+// survive. An unbalanced backtick can only come from a command that contained one
+// of its own; the tail is kept rather than swallowing the rest of the sentence.
+func stripQuoted(s string) string {
+	if !strings.ContainsRune(s, '`') {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for {
+		i := strings.IndexByte(s, '`')
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		b.WriteString(s[:i])
+		b.WriteByte(' ')
+		rest := s[i+1:]
+		j := strings.IndexByte(rest, '`')
+		if j < 0 {
+			b.WriteString(rest)
+			return b.String()
+		}
+		s = rest[j+1:]
+	}
+}
+
+// mergeEntries splices a batch of newly-emitted entries into an already-ordered
+// log, keeping the whole log non-decreasing in At.
+//
+// Both inputs are sorted, so this is one linear pass. Ties keep the entry that
+// was ALREADY in the log first: it was written first, and a stable rule is what
+// keeps re-narration byte-identical. The invariant it maintains — Entries is
+// ordered by At — is what the renderer's timestamp column depends on, and it
+// holds however out of order the underlying events were detected in.
+func mergeEntries(log, fresh []Entry) []Entry {
+	switch {
+	case len(fresh) == 0:
+		return log
+	case len(log) == 0:
+		return append(log, fresh...)
+	}
+	out := make([]Entry, 0, len(log)+len(fresh))
+	i, j := 0, 0
+	for i < len(log) && j < len(fresh) {
+		if fresh[j].At < log[i].At {
+			out = append(out, fresh[j])
+			j++
+			continue
+		}
+		out = append(out, log[i])
+		i++
+	}
+	out = append(out, log[i:]...)
+	out = append(out, fresh[j:]...)
 	return out
 }
 

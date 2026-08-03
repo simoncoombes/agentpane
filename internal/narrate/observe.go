@@ -283,7 +283,12 @@ func observe(f *facts, mem *Memory) []Entry {
 		fresh = append(fresh, e)
 	}
 	sortEntries(fresh)
-	mem.Entries = append(mem.Entries, fresh...)
+	// MERGED by event time, not appended. An entry carries the EVENT's time, and
+	// a stall is stamped from the agent's last event — which can be minutes older
+	// than a return the narrator already logged. Appending would put 2:00 after
+	// 4:00 in a column the renderer prints in slice order, and a timestamp column
+	// that runs backwards reads as a rendering fault rather than as history.
+	mem.Entries = mergeEntries(mem.Entries, fresh)
 	if mem.capN > 0 {
 		if over := len(mem.Entries) - mem.capN; over > 0 {
 			mem.Entries = mem.Entries[over:]

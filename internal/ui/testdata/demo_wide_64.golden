@@ -1,14 +1,5 @@
 AGENTS 8[90m · 3f9c[0m                                    [1m⚑ 2 NEEDS YOU[0m
 [90m────────────────────────────────────────────────────────────────[0m
-[1;7m⚑ NEEDS YOU[0m                                                     
-[1mfix-ts2345-fallout[0m  permission[1m ×3[0m                            [1m52s[0m
-run: rm -rf node_modules/.cache && pnpm rebuild
-[2;90manswer in the left pane — ⏎ jumps focus[0m
-[90m+2 retry agents folded[0m
-[1mtypecheck-works…[0m  stalled                                  [1m2m50s[0m
-no call open · silent 2m50s
-[2;90mo opens the log · y yanks the command[0m
-[90m────────────────────────────────────────────────────────────────[0m
 [1m◍[0m main[90m  refactor auth[0m                                       [90m112k[0m
 [90m│ [0mholding 2 agents · waiting on you                           [2;90m5s[0m
 [90m├─╮[0m
@@ -22,6 +13,7 @@ no call open · silent 2m50s
 [90m├─╮[0m
 [90m│ ╰[0m[1m⚑[0m[1m typecheck-works…[0m                               [1m ·····[0m[1m 2m50s[0m
 [90m│    [0m[90m⤷ [0m[1mno call open · silent 2m50s[0m          [2;90m▪▪▫·[0m[2;90m first edit[0m[90m  33k[0m
+[90m│      │ [0m[32m✔[0m[90m Edit types/session.ts[0m[2;90m  +11 −2[0m[2;90m  +3 more[0m
 [90m├─╮[0m
 [90m│ ╰[0m[32m●[0m run-auth-tests                              [32m◐ in Bash[0m[32m 3m12s[0m
 [90m│    [0m[90m⤷ [0mBash pnpm test --watch[32m  ✓ verified[0m   [2;90m▪▫··[0m[2;90m first tool[0m[90m  38k[0m
@@ -40,5 +32,13 @@ no call open · silent 2m50s
 [90m────────────────────────────────────────────────────────────────[0m
 [1m⚠ 2 agents editing db/schema.ts[0m
 [90m  audit-users-schema + write-email-index[0m
+[90m────────────────────────────────────────────────────────────────[0m
+[1;7m⚑ NEEDS YOU[0m                                                     
+[1mfix-ts2345-fallout[0m  permission[1m ×3[0m                            [1m52s[0m
+run: rm -rf node_modules/.cache && pnpm rebuild
+[90m+2 retry agents folded[0m
+[1mtypecheck-works…[0m  stalled[90m · no call open[0m                   [1m2m50s[0m
+[90mo opens the log · y yanks the command[0m
+[1m▸ answer in the left pane — ⏎ jumps focus[0m
 [90m────────────────────────────────────────────────────────────────[0m
 [2;90mj/k ␣ ⏎ f o y · n voice · t tokens[0m                  [2;90mtoken rate →[0m

@@ -2,6 +2,8 @@ package narrate
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -122,23 +124,156 @@ func TestWaitingLadderEscalatesWithDuration(t *testing.T) {
 // The third rung's count is derived from the world, not written into the
 // template: change the number of parked agents and the sentence changes with it,
 // including its grammar.
+//
+// The asking agent is NOT one of them. It is the keystroke, not a queue behind
+// it, and counting it made a lone ask claim "1 agent is parked behind that
+// keystroke" with nothing whatsoever behind it — while making the ladder's
+// "Nothing else is parked behind it" rung unreachable for as long as any ask
+// existed. The two sentences that count this set — the rung and the risk line —
+// are checked against each other at every size, because a frame that says three
+// on one line and two on the next is worse than either number alone.
 func TestWaitingLadderCountsAreDerived(t *testing.T) {
 	for _, parked := range []int{0, 1, 2, 5} {
 		w := waitingWorld(200*time.Second, parked)
 		got := joined(Narrate(w, Memory{}, snapNow(), opt()).Standup)
-		// parked = the asking agent + the queued ones.
-		want := parked + 1
 		switch {
-		case want == 1:
-			if !strings.Contains(got, "1 agent is parked") {
-				t.Errorf("parked=%d: want singular, got:\n%s", parked, got)
+		case parked == 0:
+			if !strings.Contains(got, "Nothing else is parked behind it") {
+				t.Errorf("one ask and nothing queued: the rung does not say so, got:\n%s", got)
+			}
+			if strings.Contains(got, "parked behind that keystroke") {
+				t.Errorf("the asker is counted as parked behind itself:\n%s", got)
+			}
+		case parked == 1:
+			if !strings.Contains(got, "1 agent is parked behind that keystroke") {
+				t.Errorf("parked=1: want the singular rung, got:\n%s", got)
 			}
 		default:
-			if !strings.Contains(got, fmt.Sprintf("%d agents are parked", want)) {
-				t.Errorf("parked=%d: want %d agents, got:\n%s", parked, want, got)
+			if !strings.Contains(got, fmt.Sprintf("%d agents are parked behind that keystroke", parked)) {
+				t.Errorf("parked=%d: want %d agents on the rung, got:\n%s", parked, parked, got)
+			}
+		}
+		// The rung and the risk line count the same set, so they may never
+		// disagree — including by one of them being absent.
+		if rung, risk := parkedCount(got, "keystroke"), parkedCount(got, "answer"); rung != risk {
+			t.Errorf("parked=%d: %d parked behind the keystroke but %d behind the answer:\n%s",
+				parked, rung, risk, got)
+		}
+	}
+}
+
+// parkedCount reads the number out of "n agents are parked behind that <behind>",
+// or -1 when that sentence is not in the text at all.
+func parkedCount(text, behind string) int {
+	m := regexp.MustCompile(`(\d+) agents? (?:is|are) parked behind that ` + behind).FindStringSubmatch(text)
+	if m == nil {
+		return -1
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+// §3.7 gives the exact command to the band's own row, verbatim, and the standup's
+// sentences may not print it a second time: the reader would be reading the same
+// ask twice inside one region, four rows apart. The band is the only place the
+// bytes appear in the standup, so nothing the composer writes carries a quoted
+// command at all.
+func TestTheStandupNeverQuotesTheCommand(t *testing.T) {
+	worlds := scenes()
+	worlds["resolving"] = resolvingWorld(true)
+	for name, w := range worlds {
+		st := Narrate(w, Memory{}, snapNow(), opt()).Standup
+		got := joined(st)
+		if strings.Contains(got, "`") {
+			t.Errorf("%s: the standup quotes something verbatim:\n%s", name, got)
+		}
+		for _, ask := range w.Asks {
+			if strings.Contains(got, ask.Command) {
+				t.Errorf("%s: the standup restates the command %q:\n%s", name, ask.Command, got)
 			}
 		}
 	}
+	// And it still says what the ask is FOR: the kind of answer wanted, which is
+	// the part the band's row does not carry.
+	got := joined(Narrate(blockedWorld(), Memory{}, snapNow(), opt()).Standup)
+	if !strings.Contains(got, "permission to run one Bash command") {
+		t.Errorf("the paraphrase dropped what is being asked for:\n%s", got)
+	}
+}
+
+// §3.7.8: Ask.Resolving means an answer was SEEN, not that the outcome is known.
+// Telling that reader they are the blocker asks them to answer a prompt they have
+// already answered, and the ladder's "it's one key" is pressure to press a key
+// that has been pressed.
+func TestResolvingAskIsNotTheReadersProblemAnyMore(t *testing.T) {
+	st := Narrate(resolvingWorld(true), Memory{}, snapNow(), opt()).Standup
+	got := joined(st)
+
+	for _, banned := range []string{
+		"You're the blocker", "It's one key", "parked behind that keystroke",
+		"answer in the left pane", "nothing on this screen is going to move it but you",
+	} {
+		if strings.Contains(got, banned) {
+			t.Errorf("a resolving ask still says %q:\n%s", banned, got)
+		}
+	}
+	// What is true instead, and marked as the reading of two events that it is.
+	var line Line
+	for _, l := range st.Lines {
+		if l.Part == PartMust && strings.Contains(l.Text, "answer is in") {
+			line = l
+		}
+	}
+	if line.Text == "" {
+		t.Fatalf("nothing says the answer is already in:\n%s", got)
+	}
+	if !line.Inferred || !strings.HasSuffix(line.Text, hedgeNoSignal+".") {
+		t.Errorf("the resolving reading is not marked as an inference: %q (inferred=%v)",
+			line.Text, line.Inferred)
+	}
+	if !strings.Contains(line.Text, "clears late") {
+		t.Errorf("the line does not say why it is still on the band: %q", line.Text)
+	}
+	// The wait is still reported — it is a subtraction of two timestamps — and the
+	// closing line says nothing needs doing rather than naming a key.
+	if !strings.Contains(got, "3m20s waiting") {
+		t.Errorf("the wait stopped being reported:\n%s", got)
+	}
+	if st.Action.Text != "▸ "+ActionResolving {
+		t.Errorf("action = %q, want the resolving line", st.Action.Text)
+	}
+
+	// One unanswered ask and the keys come straight back: the reader is still the
+	// blocker for THAT one, however answered the oldest is.
+	two := Narrate(resolvingWorld(false), Memory{}, snapNow(), opt()).Standup
+	if !strings.Contains(two.Action.Text, "answer in the left pane") {
+		t.Errorf("a second, unanswered ask lost the keys: %q", two.Action.Text)
+	}
+	if !strings.Contains(joined(two), "1 more ask behind it") {
+		t.Errorf("the second ask is not counted:\n%s", joined(two))
+	}
+}
+
+// resolvingWorld: an ask whose answer has been seen but not confirmed. With
+// `only` false a second, unanswered ask sits behind it.
+func resolvingWorld(only bool) state.World {
+	w := waitingWorld(200*time.Second, 1)
+	w.Asks[0].Resolving = true
+	if only {
+		return w
+	}
+	second := agent("w2", "check the migration", state.StatusAsk, 4, 190)
+	second.Tokens = 100
+	w.Agents = append(w.Agents, second)
+	w.Asks = append(w.Asks, state.Ask{
+		Key: "k2", AgentID: "w2", Description: "check the migration", Tool: "Bash",
+		Command: "psql -f db/migrations/0042.sql", Kind: "command",
+		RaisedAt: snapNow().Add(-30 * time.Second), DupeCount: 1,
+	})
+	return w
 }
 
 // The last rung claims the run has spent longer waiting than working. That is an

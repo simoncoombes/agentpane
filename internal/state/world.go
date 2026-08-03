@@ -227,7 +227,25 @@ type Agent struct {
 	// §3.4). Index 59 is the SparkAt second.
 	SparkBuckets [60]SparkBucket
 	SparkAt      time.Time
-	EditedFiles  []string
+	// HistoryBuckets is the LIFETIME activity series §13.3 Q1 asks for: equal
+	// buckets of HistoryStep each, oldest first, the first starting at
+	// HistoryFrom, counting the same tokens and calls as SparkBuckets. It spans
+	// spawn→now (spawn→done once settled) and does not roll, so the inspector's
+	// history chart covers the run rather than the trailing minute.
+	//
+	// HistoryStep is DERIVED, not fixed. The series is bounded at histCap
+	// buckets and halves its own resolution when it fills (10s → 20s → 40s …),
+	// which is what lets it cover an arbitrarily long run in constant memory.
+	// Anything drawing it must read the step off this field and say what it is —
+	// a chart labelled 10s/bar that is actually 40s/bar is a quiet lie about the
+	// horizon (C8), which is the whole failure the rolling window had.
+	//
+	// Empty with a zero HistoryFrom means no activity has ever been bucketed for
+	// this agent: an honest absence, not a measured flatline.
+	HistoryBuckets []SparkBucket
+	HistoryFrom    time.Time
+	HistoryStep    time.Duration
+	EditedFiles    []string
 	// Ask is a copy of the pending permission payload, nil when not
 	// asking.
 	Ask *event.AskPayload

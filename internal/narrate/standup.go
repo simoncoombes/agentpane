@@ -91,18 +91,44 @@ func (f *facts) mustLines(sc Scene) []Line {
 		var out []Line
 		ask := f.asks[0]
 		who := f.names.hinted(ask.AgentID, ask.Description)
-		s := fmt.Sprintf("You're the blocker. %s is waiting on %s, and nothing it does next happens without you.",
-			who, f.askWhat(ask))
-		if n := len(f.asks) - 1; n > 0 {
-			s += fmt.Sprintf(" %s behind it.", capitalise(countOf(n, "more ask")))
+
+		// The ask is named by KIND, never by command: §3.7 gives the exact string
+		// to the band's own row and prose that repeated it stated the ask twice in
+		// one region. See askGist.
+		if ask.Resolving {
+			// §3.7.8. Ask.Resolving means a grant, or an activity event after the
+			// prompt, was observed — not that the outcome is known. Denying emits
+			// nothing at all (DATA-SOURCES §1 caveat 1), so the entry clears late,
+			// and telling this reader they are the blocker would be asking them to
+			// answer a prompt they have already answered. It is a reading of two
+			// events rather than a report of one, so it is marked as one.
+			out = append(out, infer(PartMust, ToneWatch, fmt.Sprintf(
+				"%s's answer is in and the outcome isn't confirmed yet: a denial emits nothing at all, so this clears late rather than the moment you answer",
+				who), hedgeNoSignal))
+			if n := len(f.asks) - 1; n > 0 {
+				out = append(out, Line{Part: PartMust, Tone: ToneAlert,
+					Text: fmt.Sprintf("%s behind it.", capitalise(countOf(n, "more ask")))})
+			}
+		} else {
+			s := fmt.Sprintf("You're the blocker. %s is waiting on %s, and nothing it does next happens without you.",
+				who, f.askGist(ask))
+			if n := len(f.asks) - 1; n > 0 {
+				s += fmt.Sprintf(" %s behind it.", capitalise(countOf(n, "more ask")))
+			}
+			out = append(out, Line{Part: PartMust, Tone: ToneAlert, Text: s})
 		}
-		out = append(out, Line{Part: PartMust, Tone: ToneAlert, Text: s})
 
 		wait := fmt.Sprintf("%s waiting", since(f.waited))
 		if f.askShare > 0 {
 			wait += fmt.Sprintf(", which is %d%% of its whole life", f.askShare)
 		}
-		out = append(out, Line{Part: PartMust, Tone: ToneWatch, Text: wait + ". " + f.patience()})
+		if ask.Resolving {
+			// The ladder is pressure to press a key. There is no key left to press
+			// here, so the wait is reported and nothing is argued from it.
+			out = append(out, Line{Part: PartMust, Tone: ToneWatch, Text: wait + "."})
+		} else {
+			out = append(out, Line{Part: PartMust, Tone: ToneWatch, Text: wait + ". " + f.patience()})
+		}
 
 		// The retry count is the one piece of this the platform cannot express
 		// directly (DATA-SOURCES §1 caveat 1: a retried ask arrives under a
@@ -159,25 +185,35 @@ func (f *facts) riskLines(sc Scene, mem Memory) []Line {
 	}
 
 	// Contention next: two agents writing one file is the only thing here that
-	// can silently destroy work, and it is a fact, not an inference. Only while
-	// a writer is still running, though — "are both editing" about two agents
-	// that returned five minutes ago is a false present tense, and the resolved
-	// case gets its own sentence below.
+	// can silently destroy work, and it is a fact, not an inference. The tense
+	// has to be earned per WRITER, though, not per collision. Gating the whole
+	// sentence on "have they all returned" put a live present tense on writers
+	// that had already come back — "x and y are both editing db/schema.ts" two
+	// lines above "1 quiet, 1 back", which is the standup contradicting itself
+	// inside one block. So the still-live writers are named in the present and
+	// the returned ones in the past, and a collision with no live writer left is
+	// skipped here entirely (the luck line below owns the resolved case).
 	for _, c := range f.w.Contentions {
-		if f.allReturned(c.AgentIDs) {
+		live, returned := f.splitWriters(c.AgentIDs, c.AgentNames)
+		if len(live) == 0 {
 			continue
 		}
-		names := make([]string, 0, len(c.AgentIDs))
-		for i, id := range c.AgentIDs {
-			hint := ""
-			if i < len(c.AgentNames) {
-				hint = c.AgentNames[i]
+		var text string
+		if len(returned) == 0 {
+			verb := "are both editing"
+			if len(live) == 1 {
+				verb = "is editing"
+			} else if len(live) > 2 {
+				verb = "are all editing"
 			}
-			names = append(names, f.names.hinted(id, hint))
+			text = fmt.Sprintf("%s %s %s. Later write wins and nothing here is coordinating them.",
+				nameList(live, 3), verb, shortPath(c.Path))
+		} else {
+			text = fmt.Sprintf("%s %s still editing %s, which %s already wrote. Later write wins and nothing here is coordinating them.",
+				nameList(live, 3), plural(len(live), "is", "are"), shortPath(c.Path),
+				nameList(returned, 3))
 		}
-		add(Line{Part: PartRisk, Tone: ToneWatch, Text: fmt.Sprintf(
-			"%s are both editing %s. Later write wins and nothing here is coordinating them.",
-			nameList(names, 3), shortPath(c.Path))})
+		add(Line{Part: PartRisk, Tone: ToneWatch, Text: text})
 		break // the newest one; the contention region lists the rest
 	}
 
@@ -193,11 +229,27 @@ func (f *facts) riskLines(sc Scene, mem Memory) []Line {
 	// A long open call is the opposite of stuck and is worth separating: the
 	// agent is demonstrably in a call, so the silence is explained and the only
 	// question is whether the thing it is in ever exits.
+	//
+	// That question is NOT answered by the events. openLong is any open call past
+	// openCallLong, so a slow-but-finite build lands here alongside a watcher, and
+	// the old flat "it's just never going to exit on its own either" asserted the
+	// watcher's ending for both. What the events support is the duration; the rest
+	// is an inference, hedged, and it only names the watcher reading when the
+	// command itself is watch-shaped — read with state.IsWatchCommand, the same
+	// test the stall threshold uses, so the prose and the machine cannot disagree
+	// about what a watcher looks like.
 	if len(f.openLong) > 0 {
 		a := f.openLong[0]
-		add(Line{Part: PartRisk, Tone: ToneDim, Text: fmt.Sprintf(
-			"%s has held %s for %s. That's not stuck — it's just never going to exit on its own either.",
-			f.names.of(a), a.OpenCall.Tool, since(f.now.Sub(a.OpenCall.Since)))})
+		held := fmt.Sprintf("%s has held %s for %s, so it's inside a call rather than silent",
+			f.names.of(a), a.OpenCall.Tool, since(f.now.Sub(a.OpenCall.Since)))
+		if state.IsWatchCommand(a.OpenCall.TargetRaw()) {
+			add(infer(PartRisk, ToneDim, held+
+				", and the command is watch-shaped, so it is either mid-work or a watcher that will never exit on its own",
+				hedgeCantTell))
+		} else {
+			add(infer(PartRisk, ToneDim, held+
+				", and it is either still working or wedged inside that call", hedgeCantTell))
+		}
 	}
 
 	// Luck, separated from competence (§13.2). Only claimed when every agent
@@ -229,6 +281,30 @@ func (f *facts) riskLines(sc Scene, mem Memory) []Line {
 			Text: "Nothing else at risk that the events show."})
 	}
 	return out
+}
+
+// splitWriters names a collision's participants in two groups: the ones that are
+// still live and the ones that have returned, both in the contention's own id
+// order so a sentence lists them the way the contention row does.
+//
+// A writer the World no longer carries counts as LIVE, matching allReturned's
+// conservatism: the events do not say it came back, so the prose may not either.
+// The alternative — treating an absent record as settled — would drop the one
+// warning about a file that two agents are writing.
+func (f *facts) splitWriters(ids, hints []string) (live, returned []string) {
+	for i, id := range ids {
+		hint := ""
+		if i < len(hints) {
+			hint = hints[i]
+		}
+		name := f.names.hinted(id, hint)
+		if f.writerReturned(id) {
+			returned = append(returned, name)
+			continue
+		}
+		live = append(live, name)
+	}
+	return live, returned
 }
 
 func (f *facts) allReturned(ids []string) bool {
@@ -312,14 +388,35 @@ func (f *facts) stateLines(sc Scene) []Line {
 func (f *facts) action(sc Scene) Line {
 	switch sc {
 	case SceneAlert:
+		// Every outstanding ask already has an answer in: there is nothing to
+		// press, and §3.7.8's late clear is what the line reports instead. One ask
+		// still unanswered and the reader is still the blocker for that one, so the
+		// keys come back.
+		if f.allAsksResolving() {
+			return Line{Part: PartAction, Tone: ToneWatch, Text: "▸ " + ActionResolving}
+		}
 		return Line{Part: PartAction, Tone: ToneAlert, Text: "▸ answer in the left pane — ⏎ jumps focus"}
 	case SceneWatch:
-		if len(f.stuck) > 0 {
+		// One branch per thing that can PUT the world in SceneWatch (scene():
+		// stuck, a live contention, a long open call), because the action has to
+		// name something the world actually contains. The old fall-through offered
+		// "o opens the contested file" whenever nothing was stuck — including when
+		// the scene was reached by a long open call alone and no file was contested
+		// at all, which pointed the reader at a file that did not exist.
+		switch {
+		case len(f.stuck) > 0:
 			return Line{Part: PartAction, Tone: ToneWatch,
 				Text: "▸ nothing needs you — ⏎ inspects the quiet one, y yanks its command"}
+		case f.liveContention():
+			return Line{Part: PartAction, Tone: ToneWatch,
+				Text: "▸ nothing needs you — ⏎ inspects a writer, o opens the file it last touched"}
+		case len(f.openLong) > 0:
+			return Line{Part: PartAction, Tone: ToneWatch,
+				Text: "▸ nothing needs you — ⏎ inspects the open call, y yanks its command"}
+		default:
+			return Line{Part: PartAction, Tone: ToneWatch,
+				Text: "▸ nothing needs you — ⏎ inspects"}
 		}
-		return Line{Part: PartAction, Tone: ToneWatch,
-			Text: "▸ nothing needs you — ⏎ inspects, o opens the contested file"}
 	case SceneClear:
 		if n := len(f.live) + len(f.queued); n > 0 {
 			return Line{Part: PartAction, Tone: ToneDim, Text: fmt.Sprintf(

@@ -151,6 +151,13 @@ type agentState struct {
 	sparkSec [60]int64
 	spark    [60]SparkBucket
 
+	// hist is the lifetime series behind Agent.HistoryBuckets: hist[i] covers
+	// [histFrom + i*histStep, +histStep). histStep is in seconds and doubles
+	// whenever the slice would exceed histCap.
+	hist     []SparkBucket
+	histFrom time.Time
+	histStep int
+
 	editedFiles map[string]struct{}
 	failedCmds  map[string]struct{}
 	ask         *event.AskPayload
@@ -700,7 +707,7 @@ func (m *Machine) applyAgentEvent(ev event.Event, now, at time.Time) []event.Eve
 		m.resolveAsksFor(a.id, ev.Kind, at)
 	}
 	if d := accrueTokens(&a.tokens, ev); d > 0 {
-		a.bucket(at).Tokens += d
+		a.addTokens(at, d)
 		if m.run != nil {
 			m.run.tokens += d
 		}
@@ -724,7 +731,7 @@ func (m *Machine) applyAgentEvent(ev event.Event, now, at time.Time) []event.Eve
 	case event.ToolOutput:
 		// Background output growth is real liveness (§2.6a): it keeps
 		// the call-cadence sparkline alive.
-		a.bucket(at).Calls++
+		a.addCall(at)
 	case event.FileRead:
 		a.station = max(a.station, 1)
 		if ev.Target != "" {
@@ -848,7 +855,7 @@ func (m *Machine) toolStart(a *agentState, ev event.Event, now, at time.Time) []
 	a.currentTool, a.currentTarget = ev.Tool, ev.Target
 	setActivity(&a.activity, &a.activityRaw, ev)
 	a.open = &OpenCall{Tool: ev.Tool, Target: ev.Target, RawTarget: ev.RawTarget, Since: at}
-	a.bucket(at).Calls++
+	a.addCall(at)
 	out = append(out, m.derived(event.CallOpened, a.id, now, ev.Tool, ev.Target, ""))
 	if _, failed := a.failedCmds[cmdKey(ev.Tool, ev.TargetRaw())]; failed {
 		a.retries++
@@ -891,7 +898,7 @@ func (m *Machine) toolEnd(a *agentState, ev event.Event, now, at time.Time) []ev
 	out = append(out, m.observeVerify(a, tool, exact, ev.Says, failed, now)...)
 	a.currentTool, a.currentTarget = tool, target
 	setActivity(&a.activity, &a.activityRaw, ev)
-	a.bucket(at).Calls++
+	a.addCall(at)
 	return out
 }
 
@@ -1265,7 +1272,7 @@ func (m *Machine) stallThreshold(a *agentState) time.Duration {
 		cmd := a.open.Target
 		// A quiet watch is the canonical stuck case: it beats the
 		// allowlist whenever WatchNeverExempt holds.
-		if m.cfg.WatchNeverExempt && isWatchCommand(cmd) {
+		if m.cfg.WatchNeverExempt && IsWatchCommand(cmd) {
 			return m.cfg.StuckAfter
 		}
 		if m.allowRe != nil && m.allowRe.MatchString(cmd) {
@@ -1275,7 +1282,12 @@ func (m *Machine) stallThreshold(a *agentState) time.Duration {
 	return m.cfg.StuckAfter
 }
 
-func isWatchCommand(cmd string) bool {
+// IsWatchCommand reports whether a command is watch-shaped: --watch, nodemon,
+// tail -f, or a bare -w flag. It is exported because the prose in
+// internal/narrate needs the SAME test the stall threshold uses — a sentence
+// that calls a command a watcher and a machine that does not agree would be two
+// readings of one string, and the reader would only ever see one of them.
+func IsWatchCommand(cmd string) bool {
 	if watchRe.MatchString(cmd) {
 		return true
 	}
@@ -1390,7 +1402,28 @@ func (m *Machine) snapshotAgent(a *agentState) Agent {
 		out.Ask = &cp
 	}
 	out.SparkBuckets, out.SparkAt = a.sparkSnapshot(m.now)
+	// The lifetime series ends where the agent does: a settled agent's chart must
+	// not grow a tail of silence it was not alive for.
+	histEnd := m.now
+	if a.status == StatusDone && !a.doneAt.IsZero() {
+		histEnd = a.doneAt
+	}
+	out.HistoryBuckets, out.HistoryFrom, out.HistoryStep = a.histSnapshot(histEnd)
 	return out
+}
+
+// addTokens and addCall are the ONLY two writers of activity. Both series are
+// fed from one place so the row's rolling window and the inspector's lifetime
+// chart can never be counting different events — two independent accumulators
+// over the same stream is exactly how the two views would come to disagree.
+func (a *agentState) addTokens(at time.Time, n int) {
+	a.bucket(at).Tokens += n
+	a.histAdd(at, SparkBucket{Tokens: n})
+}
+
+func (a *agentState) addCall(at time.Time) {
+	a.bucket(at).Calls++
+	a.histAdd(at, SparkBucket{Calls: 1})
 }
 
 func (a *agentState) bucket(at time.Time) *SparkBucket {
@@ -1404,6 +1437,151 @@ func (a *agentState) bucket(at time.Time) *SparkBucket {
 		a.spark[i] = SparkBucket{}
 	}
 	return &a.spark[i]
+}
+
+// The lifetime activity series (§13.3 Q1).
+//
+// SparkBuckets is a strictly rolling 60-second window, so before this existed the
+// only history anywhere in the process was the trailing minute and the inspector's
+// "whole agent lifetime" chart could not be drawn — it drew the tail and said so,
+// which was honest but did not meet the ruling.
+//
+// Two properties matter, and they pull against each other:
+//
+//   - It must cover the WHOLE run. A ring of 10s buckets would clip a long run
+//     back into a tail, which is the failure being fixed.
+//   - It must be bounded. An unbounded slice is a leak measured in run length,
+//     and agentpane is a monitor that stays open all day.
+//
+// Both hold by halving the resolution instead of dropping the oldest bucket: at
+// histCap the series folds pairs and doubles histStep, so 180 buckets covers 30
+// minutes at 10s, an hour at 20s, and any run at some power-of-two multiple of
+// 10s. The cost is 180 × 16 bytes ≈ 2.9 KB per agent, flat, whatever the run
+// does. What is lost is resolution, never span — and the step travels with the
+// data (Agent.HistoryStep) so the chart can name it rather than implying 10s.
+const (
+	// histStepSeconds is the §13.3 Q1 granularity the series starts at.
+	histStepSeconds = 10
+	// histCap bounds the series. It is the whole memory story: no agent's
+	// history exceeds this many buckets, so a run cannot grow one.
+	histCap = 180
+)
+
+// histFloor snaps an instant down to a step boundary in absolute time, so bucket
+// edges depend on the clock and not on which event happened to arrive first — a
+// replay of the same events lands in the same buckets.
+func histFloor(t time.Time, step int) time.Time {
+	s := int64(step)
+	if s <= 0 {
+		s = histStepSeconds
+	}
+	sec := t.Unix()
+	return time.Unix(sec-((sec%s)+s)%s, 0).UTC()
+}
+
+// histCoarsen folds a series pairwise and doubles its step. Bucket 0 keeps its
+// start instant, so histFrom never moves and no sample changes which side of the
+// series it is on.
+func histCoarsen(in []SparkBucket, step int) ([]SparkBucket, int) {
+	n := (len(in) + 1) / 2
+	for i := 0; i < n; i++ {
+		b := in[2*i]
+		if j := 2*i + 1; j < len(in) {
+			b.Tokens += in[j].Tokens
+			b.Calls += in[j].Calls
+		}
+		in[i] = b
+	}
+	return in[:n], step * 2
+}
+
+func (a *agentState) histIndex(at time.Time) int {
+	return int(at.Sub(a.histFrom) / (time.Duration(a.histStep) * time.Second))
+}
+
+// histAdd files one delta into the lifetime series.
+//
+// The series starts at the agent's SPAWN when that is known, not at its first
+// event: the gap between the two is measured silence and belongs on the chart,
+// whereas the time before the spawn is not the agent's at all and padding it would
+// fabricate quiet the agent never had.
+func (a *agentState) histAdd(at time.Time, d SparkBucket) {
+	if at.IsZero() || (d.Tokens == 0 && d.Calls == 0) {
+		return
+	}
+	if a.histStep <= 0 {
+		a.histStep = histStepSeconds
+	}
+	if len(a.hist) == 0 {
+		start := at
+		if !a.spawnedAt.IsZero() && a.spawnedAt.Before(start) {
+			start = a.spawnedAt
+		}
+		a.histFrom = histFloor(start, a.histStep)
+		a.hist = append(a.hist, SparkBucket{})
+	}
+	// An event older than the series start. The machine tolerates out-of-order
+	// arrival everywhere else, so the sample is filed where it belongs rather
+	// than folded into bucket 0 — but the extension is bounded like everything
+	// else here, and a timestamp further back than the series could ever hold at
+	// any resolution is dropped rather than allowed to define the horizon.
+	if i := a.histIndex(at); i < 0 {
+		n := -i
+		if n > histCap {
+			return
+		}
+		a.hist = append(make([]SparkBucket, n, n+len(a.hist)), a.hist...)
+		a.histFrom = a.histFrom.Add(-time.Duration(n*a.histStep) * time.Second)
+		for len(a.hist) > histCap {
+			a.hist, a.histStep = histCoarsen(a.hist, a.histStep)
+		}
+	}
+	for {
+		i := a.histIndex(at)
+		if i < len(a.hist) {
+			a.hist[i].Tokens += d.Tokens
+			a.hist[i].Calls += d.Calls
+			return
+		}
+		if len(a.hist) < histCap {
+			a.hist = append(a.hist, SparkBucket{})
+			continue
+		}
+		a.hist, a.histStep = histCoarsen(a.hist, a.histStep)
+	}
+}
+
+// histSnapshot copies the series out and extends it to the agent's current edge.
+//
+// The trailing extension is the mirror of the leading one: an agent that has done
+// nothing for two minutes has two minutes of measured silence inside its lifetime,
+// and a chart that stopped at the last event would show a run shorter than the
+// clock on the row. It is computed here rather than written on every Tick so the
+// machine does no work for an idle agent, and it coarsens under the same cap, so
+// a long silence cannot grow the snapshot either.
+func (a *agentState) histSnapshot(end time.Time) ([]SparkBucket, time.Time, time.Duration) {
+	if len(a.hist) == 0 {
+		return nil, time.Time{}, 0
+	}
+	step := a.histStep
+	if step <= 0 {
+		step = histStepSeconds
+	}
+	out := append(make([]SparkBucket, 0, len(a.hist)+8), a.hist...)
+	if !end.IsZero() && end.After(a.histFrom) {
+		for {
+			want := int(end.Sub(a.histFrom)/(time.Duration(step)*time.Second)) + 1
+			if want <= len(out) {
+				break
+			}
+			if len(out) >= histCap {
+				out, step = histCoarsen(out, step)
+				continue
+			}
+			out = append(out, SparkBucket{})
+		}
+	}
+	return out, a.histFrom, time.Duration(step) * time.Second
 }
 
 func (a *agentState) sparkSnapshot(now time.Time) ([60]SparkBucket, time.Time) {

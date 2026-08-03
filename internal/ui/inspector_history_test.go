@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/simoncoombes/agentpane/internal/event"
 	"github.com/simoncoombes/agentpane/internal/state"
 )
 
@@ -96,12 +97,28 @@ func TestHistorySharesRowScale(t *testing.T) {
 		perSecond := float64(level) / float64(historyBucketSeconds)
 		share := perSecond / (float64(runMax) / rowUnit)
 		want := strings.Count(activityGauge(share, level > 0, now), gaugeFilled)
-		if got := historyShareCells(level, runMax); got != want {
+		if got := historyShareCells(level, runMax, historyBucketSeconds); got != want {
 			t.Errorf("level %d vs runMax %d: history %d cells, row %d cells (share %.4f)",
 				level, runMax, got, want, share)
 		}
-		if filled := historyFilled(level, runMax); filled != (want >= 1) {
+		if filled := historyFilled(level, runMax, historyBucketSeconds); filled != (want >= 1) {
 			t.Errorf("level %d: filled=%v, row would light %d cells", level, filled, want)
+		}
+	}
+
+	// The same claim at a COARSER bar. The lifetime series halves its resolution
+	// as a run grows and folding to fit the pane coarsens it again, so the rate
+	// conversion has to use the width the bar actually covers or every long run's
+	// chart would read as busier than its row.
+	for _, barSeconds := range []int{20, 40, 90} {
+		for _, level := range []int{1, 200, 700, 5000} {
+			perSecond := float64(level) / float64(barSeconds)
+			share := perSecond / (float64(runMax) / rowUnit)
+			want := strings.Count(activityGauge(share, level > 0, now), gaugeFilled)
+			if got := historyShareCells(level, runMax, barSeconds); got != want {
+				t.Errorf("level %d over %ds vs runMax %d: history %d cells, row %d",
+					level, barSeconds, runMax, got, want)
+			}
 		}
 	}
 }
@@ -315,6 +332,197 @@ func TestInspectorHistoryNarrow44(t *testing.T) {
 	}
 	if !strings.Contains(got, gaugeFilled) {
 		t.Errorf("row = %q lost its bars", got)
+	}
+}
+
+// --- the lifetime series (§13.3 Q1) ---
+
+// histLifetimeAgent builds an agent with a lifetime series of `n` 10s buckets,
+// every `everyNth` of which holds work. This is what state.Machine now supplies.
+func histLifetimeAgent(id string, now time.Time, n, everyNth int) state.Agent {
+	step := historyBucketSeconds * time.Second
+	span := time.Duration(n) * step
+	a := state.Agent{
+		ID:          id,
+		Name:        "port the routes",
+		Type:        "general-purpose",
+		Status:      state.StatusRun,
+		SpawnedAt:   now.Add(-span),
+		LastEventAt: now,
+		SparkAt:     now,
+		HistoryFrom: now.Add(-span),
+		HistoryStep: step,
+	}
+	for i := 0; i < n; i++ {
+		b := state.SparkBucket{}
+		if i%everyNth == 0 {
+			b.Tokens = 1000
+			a.Tokens += 1000
+		}
+		a.HistoryBuckets = append(a.HistoryBuckets, b)
+	}
+	// The row's own window sees the tail of the same work.
+	for i := 50; i < 60; i++ {
+		a.SparkBuckets[i] = state.SparkBucket{Tokens: 100}
+	}
+	return a
+}
+
+// The ruling is "the whole agent lifetime", and the rolling 60s window could not
+// supply it: a five-minute agent was shown its last minute and told so. With the
+// lifetime series the chart covers the run and the note stops apologising.
+func TestHistoryCoversTheWholeLifetimeNotJustTheWindow(t *testing.T) {
+	now := histNow()
+	a := histLifetimeAgent("a", now, 30, 3) // 30 × 10s = 5 minutes
+	s := historyFor(a, "tokens", now).fold(historyDrawCells)
+
+	if s.Clipped {
+		t.Error("a series that starts at the spawn bucket is not clipped")
+	}
+	if len(s.Levels) > historyDrawCells {
+		t.Errorf("drew %d bars, budget is %d", len(s.Levels), historyDrawCells)
+	}
+	if s.Covered() < s.Lifetime {
+		t.Errorf("bars cover %s of a %s lifetime", s.Covered(), s.Lifetime)
+	}
+	note := historyNote(s, 900)
+	if !strings.Contains(note, "whole run (5:00)") {
+		t.Errorf("note = %q, want it to claim the whole run", note)
+	}
+	if strings.Contains(note, "last ") {
+		t.Errorf("note = %q still describes a tail", note)
+	}
+	// The granularity is REPORTED, never assumed: 30 source buckets folded into
+	// the 8-bar budget is 4 buckets a bar, so a bar is 40s and says so.
+	if s.BarSeconds != 40 {
+		t.Fatalf("bar = %ds, want 40 (30 buckets over %d bars)", s.BarSeconds, historyDrawCells)
+	}
+	if !strings.HasPrefix(note, "40s/bar") {
+		t.Errorf("note = %q does not lead with the real bar width", note)
+	}
+}
+
+// Folding groups whole source buckets and loses no work: it trades resolution for
+// width, which is the only honest trade available. Clipping would trade span, and
+// the span is what the ruling asks for.
+func TestHistoryFoldKeepsEveryBucketsWork(t *testing.T) {
+	now := histNow()
+	a := histLifetimeAgent("a", now, 30, 1)
+	full := historyFor(a, "tokens", now)
+	if len(full.Levels) != 30 || full.BarSeconds != historyBucketSeconds {
+		t.Fatalf("unfolded series = %d bars of %ds", len(full.Levels), full.BarSeconds)
+	}
+	folded := full.fold(historyDrawCells)
+	sum := func(v []int) int {
+		n := 0
+		for _, x := range v {
+			n += x
+		}
+		return n
+	}
+	if sum(folded.Levels) != sum(full.Levels) {
+		t.Errorf("folding lost work: %d of %d", sum(folded.Levels), sum(full.Levels))
+	}
+	if folded.BarSeconds != full.BarSeconds*4 {
+		t.Errorf("bar = %ds, want 4 source buckets wide", folded.BarSeconds)
+	}
+	if got := folded.Covered(); got < full.Covered() {
+		t.Errorf("folding lost span: %s of %s", got, full.Covered())
+	}
+	// A series that already fits is returned untouched — no fabricated bars, no
+	// restated width.
+	short := historyFor(histLifetimeAgent("b", now, 5, 1), "tokens", now).fold(historyDrawCells)
+	if len(short.Levels) != 5 || short.BarSeconds != historyBucketSeconds {
+		t.Errorf("a 5-bucket series was folded anyway: %d bars of %ds",
+			len(short.Levels), short.BarSeconds)
+	}
+}
+
+// A coarsened series (state halves its own resolution past its cap) must be drawn
+// and labelled at the width it really has, not at the nominal 10s.
+func TestHistoryReadsTheStepOffTheSeries(t *testing.T) {
+	now := histNow()
+	a := histLifetimeAgent("a", now, 6, 1)
+	a.HistoryStep = 80 * time.Second // as a long run's series arrives
+	a.HistoryFrom = now.Add(-8 * time.Minute)
+	a.SpawnedAt = a.HistoryFrom
+	s := historyFor(a, "tokens", now).fold(historyDrawCells)
+	if s.BarSeconds != 80 {
+		t.Fatalf("bar = %ds, want the series' own 80s", s.BarSeconds)
+	}
+	if note := historyNote(s, 900); !strings.HasPrefix(note, "80s/bar") {
+		t.Errorf("note = %q claims a granularity the data does not have", note)
+	}
+	if s.Clipped {
+		t.Errorf("6 × 80s covers the 8:00 lifetime, so nothing is clipped")
+	}
+}
+
+// End to end through the real machine over a run longer than the spark window:
+// the inspector row must say "whole run", which is the ruling, and it could not
+// before.
+func TestInspectorHistoryOverARunLongerThanTheWindow(t *testing.T) {
+	start := histNow().Add(-6 * time.Minute)
+	m := state.New(state.DefaultConfig())
+	m.Apply(event.Event{Kind: event.AgentSpawned, AgentID: "a1", AgentName: "port the routes", At: start}, start)
+	tokens := 0
+	for d := time.Duration(0); d <= 6*time.Minute; d += 15 * time.Second {
+		at := start.Add(d)
+		tokens += 400
+		m.Apply(event.Event{Kind: event.TokensUpdated, AgentID: "a1", Tokens: tokens, At: at}, at)
+	}
+	now := start.Add(6 * time.Minute)
+	m.Tick(now)
+	w := m.Snapshot()
+
+	v := newUIState(testConfig())
+	v.SelID = "a1"
+	pal := NewPalette(2, true)
+	got := stripANSI(renderSegs(inspectorHistoryRow(w, v, 64, now, pal)))
+
+	if !strings.Contains(got, "whole run (6:00)") {
+		t.Errorf("row = %q, want the whole run", got)
+	}
+	if strings.Contains(got, "last 60s") {
+		t.Errorf("row = %q is still drawing the rolling window", got)
+	}
+	if !strings.Contains(got, gaugeFilled) {
+		t.Errorf("row = %q drew no bars for six minutes of work", got)
+	}
+	if n := len([]rune(strings.TrimRight(got, " "))); n > 64 {
+		t.Errorf("row is %d columns: %q", n, got)
+	}
+	// The bar width has to be a whole multiple of the source bucket, and stated.
+	a := w.Agents[0]
+	s := historyFor(a, v.SparkMetric, now).fold(historyDrawCells)
+	if s.BarSeconds%int(a.HistoryStep/time.Second) != 0 {
+		t.Errorf("bar %ds is not a multiple of the %s source bucket", s.BarSeconds, a.HistoryStep)
+	}
+	if !strings.Contains(got, itoa(s.BarSeconds)+"s/bar") {
+		t.Errorf("row = %q does not state the %ds bar it drew", got, s.BarSeconds)
+	}
+}
+
+// A world with no lifetime series still renders — and still admits that what it is
+// showing is a tail. The fallback is the only thing that kept the old ruling
+// unmet, so it may not pretend otherwise.
+func TestHistoryFallbackStillAdmitsItIsATail(t *testing.T) {
+	now := histNow()
+	a := histAgent("a", now, 4*time.Minute+12*time.Second)
+	a.SparkBuckets[59] = state.SparkBucket{Tokens: 900}
+	a.Tokens = 900
+	if len(a.HistoryBuckets) != 0 {
+		t.Fatal("fixture is not the fallback case")
+	}
+	s := historyFor(a, "tokens", now).fold(historyDrawCells)
+	if !s.Clipped {
+		t.Fatal("the 60s window over a 4m12s life is a tail")
+	}
+	note := historyNote(s, 900)
+	for _, want := range []string{"10s/bar", "last 60s of", "4:12"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note = %q, missing %q", note, want)
+		}
 	}
 }
 
