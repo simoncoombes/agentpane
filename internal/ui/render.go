@@ -128,7 +128,7 @@ func narrationPlan(w state.World, v *UIState, width, leftover int, now time.Time
 		// deliberately not "region + every tree row must fit": the tree is
 		// allowed to window inside its share, and requiring the whole tree
 		// would switch the voice off on any pane with a few agents.
-		if h <= leftover-minTreeRows && tree.scrollInfo == "" && tree.breadth {
+		if h <= leftover-minTreeRows && tree.scrollInfo == "" && tree.breadth && !tree.starved {
 			return narrPlan{mode: mode, tree: tree}
 		}
 	}
@@ -138,12 +138,56 @@ func narrationPlan(w state.World, v *UIState, width, leftover int, now time.Time
 		if room := leftover - minTreeRows; want > room {
 			want = room
 		}
-		// alertOnlyMin is the chip plus the oldest entry. Below that there is
-		// genuinely nowhere to put the band and the header's `⚑ n NEEDS YOU` is
-		// the only surface left — which is also the geometry renderCondensed
-		// exists for, one row further down.
+		// The band cedes rows until a whole agent block fits under it.
+		//
+		// minTreeRows is a constant floor and an agent block is not: main's own
+		// block is one or two rows depending on whether it is blocked, the §1.5
+		// suppressed line and the detail-unavailable notice sit between main and the
+		// first agent, and the cheapest agent block is two rows (its trunk connector
+		// and its head). So the floor was routinely a row or two short, the windower
+		// emitted a block it could not finish, and the frame's last-resort clip left
+		// a bare `├─╮` standing in for an agent. The tree measures its own share and
+		// says so (treeResult.starved); this is the only place that can answer it.
+		//
+		// The alert never gives up more than it has to, and never goes below
+		// alertOnlyMin: the chip plus the oldest entry is the band, and below that
+		// the header's `⚑ n NEEDS YOU` is the only surface left — which is also the
+		// geometry renderCondensed exists for, one row further down.
+		tree := attempt(want)
+		if tree.starved {
+			// What the band may cede stops at what renderAlertOnly pays for first:
+			// the chip, bandCoreRows — §3.7's "who is blocked and the exact command
+			// they are blocked on" written down — and the §3.12 action row that says
+			// what to press about it. Those rows come before the separator, the
+			// folded ghosts, the second entry and every word of prose, so they come
+			// before the tree's breadth too.
+			floor := 1 + bandCoreRows(entries)
+			if bandAction(entries) != "" {
+				floor++
+			}
+			if floor < alertOnlyMin {
+				floor = alertOnlyMin
+			}
+			// Cede one row at a time; the largest share that seats a whole agent
+			// block wins, so the band never gives up more than the tree can use.
+			for give := want - 1; give >= floor; give-- {
+				if t := attempt(give); !t.starved {
+					want, tree = give, t
+					break
+				}
+			}
+			if tree.starved {
+				// Nothing the band can give up seats a block, so it keeps every row
+				// it asked for rather than shrinking for nothing, and the tree draws
+				// main alone. That is the honest end of the ladder — no agent row is
+				// claimed and no `1–1 / n` is printed for a window that drew nothing
+				// — and it is one row above the geometry where renderCondensed's
+				// one-liners take over anyway.
+				tree = attempt(want)
+			}
+		}
 		if want >= alertOnlyMin {
-			return narrPlan{mode: VoiceOff, alertRows: want, tree: attempt(want)}
+			return narrPlan{mode: VoiceOff, alertRows: want, tree: tree}
 		}
 	}
 	return narrPlan{mode: VoiceOff, tree: attempt(0)}
@@ -242,7 +286,7 @@ func renderActive(w state.World, v *UIState, width, rows int, now time.Time, pal
 	f := &frame{}
 	entries := bandEntries(w, v, now)
 
-	f.add("", headerLine(w, v, width, now, pal, len(entries)))
+	f.add("", headerLine(w, v, width, now, pal, bandAlertCount(entries)))
 	f.add("", rule(width, pal))
 
 	var inspLines [][]seg
@@ -289,7 +333,8 @@ func renderActive(w state.World, v *UIState, width, rows int, now time.Time, pal
 		rest = 0
 	}
 	if len(treeLines) > rest {
-		treeLines, treeIDs = treeLines[:rest], treeIDs[:rest]
+		cut := treeBlockCut(treeIDs, rest)
+		treeLines, treeIDs = treeLines[:cut], treeIDs[:cut]
 	}
 	if rest -= len(treeLines); len(inspLines) > rest {
 		inspLines = inspLines[:rest]
@@ -325,6 +370,37 @@ func renderActive(w state.World, v *UIState, width, rows int, now time.Time, pal
 		}
 	}
 	return f
+}
+
+// treeBlockCut is where the tree's lines may be cut so that no agent's block is
+// left half-drawn: at most `rest` lines, backing off to the start of whatever
+// block the cut landed inside.
+//
+// A block is a maximal run of one id in the hit-test metadata, so this needs no
+// knowledge of what a row looks like. It is the frame's own restatement of the
+// rule renderTree now holds internally (treeResult.starved): cutting a block after
+// its trunk connector leaves `├─╮` standing in for an agent — a selectable row with
+// no glyph, no slug, no timer and no §3.19 change mark. A frame must never claim a
+// row it did not draw.
+func treeBlockCut(ids []string, rest int) int {
+	if rest <= 0 {
+		return 0
+	}
+	if rest >= len(ids) {
+		return len(ids)
+	}
+	cut := rest
+	for cut > 0 && ids[cut] != "" && ids[cut] == ids[cut-1] {
+		cut--
+	}
+	if cut == 0 {
+		// Only main's block can start at line 0 (emitMain always runs first), and
+		// main's row head IS its first line, so clipping it keeps the row it claims.
+		// Backing off to nothing would drop the sticky root instead, which is worse
+		// than either.
+		return rest
+	}
+	return cut
 }
 
 // headerSessionID is the "AGENTS n · <id>" suffix (§3.8a): which session this
@@ -511,7 +587,7 @@ func renderIdleFrame(w state.World, v *UIState, width, rows int, now time.Time, 
 func renderCondensed(w state.World, v *UIState, width, rows int, now time.Time, pal Palette) *frame {
 	f := &frame{}
 	entries := bandEntries(w, v, now)
-	f.add("", headerLine(w, v, width, now, pal, len(entries)))
+	f.add("", headerLine(w, v, width, now, pal, bandAlertCount(entries)))
 	if len(entries) > 0 {
 		e := entries[0]
 		label := line(

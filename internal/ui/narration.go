@@ -190,7 +190,7 @@ func (v *UIState) advanceNarration(w state.World, now time.Time, width int) []na
 	// screen. At offset zero — auto-follow — nothing is adjusted, which is what
 	// makes the newest line arrive at the bottom.
 	if len(r.New) > 0 && v.CommScroll > 0 {
-		v.CommScroll += commentaryTotalLines(r.New, width)
+		v.CommScroll += commentaryTotalLines(r.New, narrate.CommandsOnScreen(w), width)
 	}
 	return r.New
 }
@@ -243,7 +243,7 @@ func renderNarration(w state.World, v *UIState, mode VoiceMode, width int, now t
 	entries := bandEntries(w, v, now)
 	out, ids, prose := renderStandup(st, entries, v, mode, width, pal)
 	if mode == VoiceFull {
-		comm := renderCommentary(v, width, pal)
+		comm := renderCommentary(v, narrate.CommandsOnScreen(w), width, pal)
 		for _, ln := range comm {
 			out, ids = append(out, ln), append(ids, "")
 		}
@@ -346,8 +346,28 @@ func renderStandup(st narrate.Standup, entries []bandEntry, v *UIState, mode Voi
 	if a := bandAction(entries); a != "" {
 		action, tone = a, narrate.ToneAlert
 	}
-	out, ids = append(out, truncSegs(line(seg{action, toneStyle(tone, pal)}), width)), append(ids, "")
+	out, ids = append(out, truncSegs(line(seg{fitAction(action, width), toneStyle(tone, pal)}), width)), append(ids, "")
 	return out, ids, prose.String()
+}
+
+// fitAction picks the action row's copy for the width it has to be read at.
+//
+// The action row is the point of the whole region (§13.2: the standup always ends
+// by naming the action or saying none is needed), so it is the one line where a
+// truncation is not an acceptable degradation — half a clause reads as a broken
+// renderer, not as a state. Only §3.7.8's copy has a narrow form, because it is the
+// only action long enough to overflow the §3.1 narrow budget; anything else falls
+// through to truncSegs unchanged rather than being silently reworded.
+func fitAction(s string, width int) string {
+	if runewidth.StringWidth(s) <= width {
+		return s
+	}
+	if i := strings.Index(s, narrate.ActionResolving); i >= 0 {
+		if short := s[:i] + narrate.ActionResolvingNarrow + s[i+len(narrate.ActionResolving):]; runewidth.StringWidth(short) <= width {
+			return short
+		}
+	}
+	return s
 }
 
 // bandID is the row id for a band line: selBand while there is a band, "" when
@@ -440,7 +460,7 @@ func renderAlertOnly(entries []bandEntry, dig *digest, v *UIState, width, rows i
 		out, ids = append(out, b.segs), append(ids, selBand)
 	}
 	if showAction {
-		out, ids = append(out, truncSegs(line(seg{action, pal.NeedsYou}), width)), append(ids, "")
+		out, ids = append(out, truncSegs(line(seg{fitAction(action, width), pal.NeedsYou}), width)), append(ids, "")
 	}
 	for len(out) < rows {
 		out, ids = append(out, nil), append(ids, "")
@@ -513,10 +533,10 @@ func standupBody(st narrate.Standup, entries []bandEntry, dig *digest, width int
 
 // renderCommentary draws the commentary region: rule, header, then the newest
 // lines at the bottom.
-func renderCommentary(v *UIState, width int, pal Palette) [][]seg {
+func renderCommentary(v *UIState, onScreen map[string]bool, width int, pal Palette) [][]seg {
 	out := [][]seg{rule(width, pal)}
 
-	body, heads := commentaryLines(v.Narr.Entries, width, pal)
+	body, heads := commentaryLines(v.Narr.Entries, onScreen, width, pal)
 	avail := commentaryBodyRows()
 	scroll := clampCommScroll(v.CommScroll, len(body), avail)
 
@@ -604,7 +624,11 @@ func clampCommScroll(scroll, total, avail int) int {
 // on its first line, and continuations are indented under the text so the clock
 // stays readable as a column. The heads slice is what lets the window open on a
 // whole entry instead of on a fragment.
-func commentaryLines(entries []narrate.Entry, width int, pal Palette) (lines [][]seg, heads []bool) {
+// onScreen is the set of commands the band may print verbatim this frame
+// (narrate.CommandsOnScreen). Every entry's text comes from Entry.TextOn, which is
+// what keeps the log's verbatim record of an ask off a frame that is already
+// showing those bytes on the band's own row — see narrate.Entry.Cmd.
+func commentaryLines(entries []narrate.Entry, onScreen map[string]bool, width int, pal Palette) (lines [][]seg, heads []bool) {
 	stamp := commentaryStampWidth
 	indent := strings.Repeat(" ", stamp)
 	textWidth := width - stamp
@@ -613,7 +637,7 @@ func commentaryLines(entries []narrate.Entry, width int, pal Palette) (lines [][
 	}
 	for _, e := range entries {
 		style := toneStyle(e.Tone, pal)
-		for i, ln := range wrapAll(e.Text, textWidth) {
+		for i, ln := range wrapAll(e.TextOn(onScreen), textWidth) {
 			if i == 0 {
 				lines = append(lines, truncSegs(line(
 					seg{padRight(commentaryStamp(e.At), stamp), pal.Deep},
@@ -704,7 +728,11 @@ func wrapAll(s string, w int) []string {
 // commentaryTotalLines measures the rendered height of the log at a width. The
 // Model needs it to hold a paused view still as new entries arrive, and the page
 // keys need it to clamp.
-func commentaryTotalLines(entries []narrate.Entry, width int) int {
+//
+// It measures the form that will actually be DRAWN (Entry.TextOn), because the
+// two-form rule can change an entry's wrapped height: a clamp computed from the
+// other form would let ⇞ run one line past the top of the log.
+func commentaryTotalLines(entries []narrate.Entry, onScreen map[string]bool, width int) int {
 	stamp := commentaryStampWidth
 	textWidth := width - stamp
 	if textWidth < 8 {
@@ -712,7 +740,7 @@ func commentaryTotalLines(entries []narrate.Entry, width int) int {
 	}
 	n := 0
 	for _, e := range entries {
-		if k := len(wrapAll(e.Text, textWidth)); k > 0 {
+		if k := len(wrapAll(e.TextOn(onScreen), textWidth)); k > 0 {
 			n += k
 		}
 	}

@@ -48,6 +48,16 @@ type treeResult struct {
 	// shrinks 14→8→4 as the voice grows) and "the tree gave up telling you what
 	// an agent is doing" (never acceptable for prose).
 	breadth bool
+	// starved reports that the share the tree was given could not hold ONE whole
+	// agent block, so it drew none: the frame has agents and no agent row.
+	//
+	// It is the tree's request for rows, and narrationPlan cedes them (see there).
+	// The alternative used to be worse than scrolling: the windower emitted the
+	// block anyway, the frame's last-resort clip cut it after its trunk connector,
+	// and what reached the reader was a bare `├─╮` — selectable, counted in
+	// `1–1 / 2`, carrying no glyph, no slug, no timer and no §3.19 change mark. A
+	// frame must never claim a row it did not draw.
+	starved bool
 }
 
 // renderTree renders main plus every subagent into at most avail lines,
@@ -273,6 +283,10 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 		if len(agents) > 0 && bottom > top {
 			res.scrollInfo = fmt.Sprintf("%d–%d / %d", top+1, bottom, len(agents))
 		}
+		// No whole block fitted. scrollInfo stays empty — "1–1 / 2" over nothing was
+		// the frame claiming a row it never drew — and starved asks the caller for
+		// the rows instead.
+		res.starved = bottom == top && len(blocks) > 0
 	}
 
 	if gutter {
@@ -396,9 +410,12 @@ func scrollWindow(blocks []block, agents []state.Agent, v *UIState, budget int) 
 		top++
 		bottom = fits(top)
 	}
-	if bottom == top && top < len(blocks) {
-		bottom = top + 1 // always show at least the selected block, clipped
-	}
+	// A block that does not fit is NOT emitted clipped. It used to be ("always show
+	// at least the selected block, clipped"), and what the reader got was the
+	// block's trunk connector on its own after the frame's last-resort clip took the
+	// rest — a selectable row with no glyph, no slug and no timer, counted in the
+	// footer's `1–1 / n`. renderTree reports the starvation instead and
+	// narrationPlan cedes the row.
 	v.ScrollTop = top
 	return top, bottom
 }
@@ -480,6 +497,13 @@ func mainWaiting(w state.World, agents []state.Agent) string {
 // progress (asking or queued). "waiting on you" is added only while an ask is
 // actually outstanding, because that is the only case where the user is the
 // blocker, and it goes last so the row ends on the thing to do about it.
+//
+// "Outstanding" excludes a RESOLVING ask (§3.7.8): its answer has already been
+// seen and only the outcome is unconfirmed, so the reader is not the blocker any
+// more. Counting w.Asks flat put `waiting on you` on main's row on the same frame
+// the region below it said `nothing needs you — waiting on the event that
+// confirms it`. The "holding" half still counts the agent, because it genuinely
+// cannot progress until the outcome lands.
 func blockedOn(w state.World, agents []state.Agent) string {
 	held := 0
 	for _, a := range agents {
@@ -488,10 +512,16 @@ func blockedOn(w state.World, agents []state.Agent) string {
 			held++
 		}
 	}
+	outstanding := 0
+	for _, ask := range w.Asks {
+		if !ask.Resolving {
+			outstanding++
+		}
+	}
 	switch {
-	case len(w.Asks) > 0 && held > 0:
+	case outstanding > 0 && held > 0:
 		return "holding " + countNoun(held, "agent") + " · waiting on you"
-	case len(w.Asks) > 0:
+	case outstanding > 0:
 		return "waiting on you"
 	case held > 0:
 		return "holding " + countNoun(held, "agent")

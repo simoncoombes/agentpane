@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/simoncoombes/agentpane/internal/event"
+	"github.com/simoncoombes/agentpane/internal/narrate"
 	"github.com/simoncoombes/agentpane/internal/state"
 )
 
@@ -231,7 +232,8 @@ func (m *Model) pageKey(up bool) {
 			}
 		}
 	case m.voiceDrawn() == VoiceFull:
-		total := commentaryTotalLines(m.v.Narr.Entries, frameWidth(m.v, m.cols))
+		total := commentaryTotalLines(m.v.Narr.Entries,
+			narrate.CommandsOnScreen(m.world), frameWidth(m.v, m.cols))
 		max := total - commentaryBodyRows()
 		if max < 0 {
 			max = 0

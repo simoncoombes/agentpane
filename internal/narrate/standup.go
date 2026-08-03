@@ -89,6 +89,21 @@ func (f *facts) mustLines(sc Scene) []Line {
 	switch sc {
 	case SceneAlert:
 		var out []Line
+		if len(f.asks) == 0 {
+			// scene() reaches SceneAlert on an asking AGENT with no ask record too
+			// (allAsksResolving names the same case), and indexing asks[0] on that
+			// world panicked the whole pane. The agent's status is all the world
+			// carries there, so it is all that is claimed.
+			who := f.names.of(f.asking[0])
+			out = append(out, Line{Part: PartMust, Tone: ToneAlert, Text: fmt.Sprintf(
+				"You're the blocker. %s is waiting on an answer, and the request itself never reached this pane.",
+				who)})
+			if n := len(f.asking) - 1; n > 0 {
+				out = append(out, Line{Part: PartMust, Tone: ToneAlert,
+					Text: fmt.Sprintf("%s behind it.", capitalise(countOf(n, "more agent")))})
+			}
+			return out
+		}
 		ask := f.asks[0]
 		who := f.names.hinted(ask.AgentID, ask.Description)
 
@@ -194,12 +209,26 @@ func (f *facts) riskLines(sc Scene, mem Memory) []Line {
 	// the returned ones in the past, and a collision with no live writer left is
 	// skipped here entirely (the luck line below owns the resolved case).
 	for _, c := range f.w.Contentions {
-		live, returned := f.splitWriters(c.AgentIDs, c.AgentNames)
-		if len(live) == 0 {
-			continue
-		}
+		live, stopped := f.splitWriters(c.AgentIDs, c.AgentNames)
 		var text string
-		if len(returned) == 0 {
+		switch {
+		case len(live) == 0 && len(stopped) > 0 && !f.allReturned(c.AgentIDs):
+			// Every writer has stopped without all of them returning: one is blocked
+			// on a prompt, or gone quiet. The warning is still owed — the file is
+			// still contested and the later write still wins — but there is no live
+			// writer to put in the present tense, and the luck line below only
+			// speaks for the all-returned case, so this one would have gone unsaid.
+			verb := "both wrote"
+			if len(stopped) == 1 {
+				verb = "wrote"
+			} else if len(stopped) > 2 {
+				verb = "all wrote"
+			}
+			text = fmt.Sprintf("%s %s %s and nothing is writing it now. Later write wins and nothing here is coordinating them.",
+				nameList(stopped, 3), verb, shortPath(c.Path))
+		case len(live) == 0:
+			continue
+		case len(stopped) == 0:
 			verb := "are both editing"
 			if len(live) == 1 {
 				verb = "is editing"
@@ -208,10 +237,10 @@ func (f *facts) riskLines(sc Scene, mem Memory) []Line {
 			}
 			text = fmt.Sprintf("%s %s %s. Later write wins and nothing here is coordinating them.",
 				nameList(live, 3), verb, shortPath(c.Path))
-		} else {
+		default:
 			text = fmt.Sprintf("%s %s still editing %s, which %s already wrote. Later write wins and nothing here is coordinating them.",
 				nameList(live, 3), plural(len(live), "is", "are"), shortPath(c.Path),
-				nameList(returned, 3))
+				nameList(stopped, 3))
 		}
 		add(Line{Part: PartRisk, Tone: ToneWatch, Text: text})
 		break // the newest one; the contention region lists the rest
@@ -283,28 +312,52 @@ func (f *facts) riskLines(sc Scene, mem Memory) []Line {
 	return out
 }
 
-// splitWriters names a collision's participants in two groups: the ones that are
-// still live and the ones that have returned, both in the contention's own id
-// order so a sentence lists them the way the contention row does.
+// splitWriters names a collision's participants in two groups: the ones that
+// could still be writing and the ones that have stopped, both in the contention's
+// own id order so a sentence lists them the way the contention row does.
+//
+// "Stopped" is not just StatusDone. An agent blocked on a permission prompt, or
+// one that has gone silent, is not editing anything — testing only for Done put
+// `audit-users-schema is still editing db/schema.ts` two lines under `You're the
+// blocker. audit-users-schema is waiting on permission…`, which is the standup
+// contradicting itself inside one block. Same family as the returned-writer tense:
+// the tense has to be earned per WRITER, from that writer's own status.
 //
 // A writer the World no longer carries counts as LIVE, matching allReturned's
-// conservatism: the events do not say it came back, so the prose may not either.
+// conservatism: the events do not say it stopped, so the prose may not either.
 // The alternative — treating an absent record as settled — would drop the one
 // warning about a file that two agents are writing.
-func (f *facts) splitWriters(ids, hints []string) (live, returned []string) {
+func (f *facts) splitWriters(ids, hints []string) (live, stopped []string) {
 	for i, id := range ids {
 		hint := ""
 		if i < len(hints) {
 			hint = hints[i]
 		}
 		name := f.names.hinted(id, hint)
-		if f.writerReturned(id) {
-			returned = append(returned, name)
+		if f.writerStopped(id) {
+			stopped = append(stopped, name)
 			continue
 		}
 		live = append(live, name)
 	}
-	return live, returned
+	return live, stopped
+}
+
+// writerStopped reports that this participant is demonstrably not writing right
+// now: it has returned, it is blocked on a prompt, or it has gone silent. It is
+// deliberately NOT writerReturned — that predicate answers "is the collision
+// settled", which gates the scene and the luck line, and a blocked writer settles
+// nothing.
+func (f *facts) writerStopped(id string) bool {
+	a, ok := f.agent(id)
+	if !ok {
+		return false
+	}
+	switch a.Status {
+	case state.StatusDone, state.StatusAsk, state.StatusStuck:
+		return true
+	}
+	return false
 }
 
 func (f *facts) allReturned(ids []string) bool {

@@ -106,6 +106,16 @@ const (
 // two different things about the same state.
 const ActionResolving = "nothing needs you — waiting on the event that confirms it"
 
+// ActionResolvingNarrow is the same state in 41 columns, for a pane that cannot
+// hold the long form.
+//
+// With the `▸ ` prefix the long one is 53 columns and the §3.1 narrow budget is
+// 44, so it was cut mid-clause — `▸ nothing needs you — waiting on the event …` —
+// which reads as a rendering fault rather than as a state. Both halves of the
+// sentence survive here: nothing is needed, and something is still awaited. A
+// shorter sentence is a choice; a truncated one is an accident.
+const ActionResolvingNarrow = "nothing needs you — awaiting confirmation"
+
 // Hedges. An inferred sentence is built by infer(), which appends one of these,
 // so the marking cannot be forgotten at a call site (§3.14: mark inference
 // everywhere).
@@ -155,7 +165,66 @@ type Entry struct {
 	Text     string
 	Inferred bool
 	Mine     bool
+
+	// Cmd and Gist are the two-form rule that keeps a command from being printed
+	// twice in one frame. THE RULING (see CommandsOnScreen):
+	//
+	// The verbatim command belongs to the band's row, because §3.7 requires it
+	// there — that row is what the reader approves. The commentary is a LOG: it
+	// may keep the exact bytes for the historical record, but not while the same
+	// command is on screen in the band. So an entry that quotes a command carries
+	// both forms and the RENDERER picks: Gist (which names the kind, as askGist
+	// does) while the ask is live and the band is drawing it, Text — the verbatim
+	// record — once the ask has resolved and the band no longer shows it.
+	//
+	// Nothing is rewritten: both forms are fixed when the entry is appended and
+	// the Memory keeps the bytes for the life of the run. Only which of the two
+	// is PRINTED depends on the frame, which is the only way the log can keep a
+	// lasting record of the approved bytes and the frame can still state the
+	// command exactly once.
+	//
+	// Cmd is the whitespace-collapsed command quoted inside Text, and "" for the
+	// overwhelming majority of entries, which quote nothing. Gist is empty
+	// whenever Cmd is: TextOn then always returns Text.
+	Cmd  string
+	Gist string
 }
+
+// TextOn is the entry's text for a frame whose band is printing the commands in
+// onScreen (built by CommandsOnScreen). It is the one place the two-form rule is
+// applied, so no caller can print the wrong form by forgetting it.
+func (e Entry) TextOn(onScreen map[string]bool) string {
+	if e.Cmd != "" && e.Gist != "" && onScreen[e.Cmd] {
+		return e.Gist
+	}
+	return e.Text
+}
+
+// CommandsOnScreen is the set of commands the alert band may print verbatim on
+// this frame, normalised the way Entry.Cmd is so the two can be compared.
+//
+// It is derived from the OUTSTANDING asks rather than from the rendered rows.
+// That is deliberate: the band's row can be clipped by a short region, and
+// paraphrasing a log line whose bytes turned out not to be drawn costs the reader
+// nothing (both forms say what was asked), while printing the bytes twice is the
+// defect this exists to prevent. Conservative in the safe direction.
+func CommandsOnScreen(w state.World) map[string]bool {
+	if len(w.Asks) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(w.Asks))
+	for _, a := range w.Asks {
+		if c := normCmd(a.Command); c != "" {
+			out[c] = true
+		}
+	}
+	return out
+}
+
+// normCmd is the comparison form of a command: whitespace runs collapsed, which
+// is what both the band's display copy (§13.1(b) flattening) and quoteCmd do
+// before printing it.
+func normCmd(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // Standup is the whole standup block: a sticky chip, the ordered sentences, and
 // an action that is always present.

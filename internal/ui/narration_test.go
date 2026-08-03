@@ -280,7 +280,7 @@ func TestCommentaryAutoFollowsTheNewestEntry(t *testing.T) {
 		t.Fatalf("fixture starts scrolled: %d", v.CommScroll)
 	}
 	last := v.Narr.Entries[len(v.Narr.Entries)-1]
-	lines := renderCommentary(v, 64, NewPalette(2, false))
+	lines := renderCommentary(v, nil, 64, NewPalette(2, false))
 	if !strings.Contains(plainLines(lines), headWords(last.Text)) {
 		t.Errorf("newest entry is not visible while following:\n%s", plainLines(lines))
 	}
@@ -299,7 +299,7 @@ func TestCommentaryPausesOnScrollUpAndResumesAtTheBottom(t *testing.T) {
 	if m.v.CommScroll == 0 {
 		t.Fatal("⇞ did not scroll up")
 	}
-	pinned := commentaryBody(renderCommentary(m.v, 64, pal))
+	pinned := commentaryBody(renderCommentary(m.v, nil, 64, pal))
 	newest := m.v.Narr.Entries[len(m.v.Narr.Entries)-1]
 	if strings.Contains(pinned, headWords(newest.Text)) {
 		t.Errorf("still showing the newest entry after scrolling up:\n%s", pinned)
@@ -307,7 +307,7 @@ func TestCommentaryPausesOnScrollUpAndResumesAtTheBottom(t *testing.T) {
 
 	// Ten more entries arrive. The pinned view must hold still.
 	feedCommentary(m, 10)
-	if held := commentaryBody(renderCommentary(m.v, 64, pal)); held != pinned {
+	if held := commentaryBody(renderCommentary(m.v, nil, 64, pal)); held != pinned {
 		t.Errorf("paused view slid when entries arrived:\n--- was ---\n%s\n--- now ---\n%s",
 			pinned, held)
 	}
@@ -319,7 +319,7 @@ func TestCommentaryPausesOnScrollUpAndResumesAtTheBottom(t *testing.T) {
 	if m.v.CommScroll != 0 {
 		t.Fatalf("paging down never reached the bottom: %d", m.v.CommScroll)
 	}
-	back := plainLines(renderCommentary(m.v, 64, pal))
+	back := plainLines(renderCommentary(m.v, nil, 64, pal))
 	newest = m.v.Narr.Entries[len(m.v.Narr.Entries)-1]
 	if !strings.Contains(back, headWords(newest.Text)) {
 		t.Errorf("follow did not resume at the bottom:\n%s", back)
@@ -330,7 +330,7 @@ func TestCommentaryPausesOnScrollUpAndResumesAtTheBottom(t *testing.T) {
 // overlap) rather than a single row.
 func TestCommentaryPagingIsBoundedAndPagesAPage(t *testing.T) {
 	m := commentaryModel(t, 72)
-	total := commentaryTotalLines(m.v.Narr.Entries, 64)
+	total := commentaryTotalLines(m.v.Narr.Entries, nil, 64)
 	max := total - commentaryBodyRows()
 
 	m.handleKey(tea.KeyMsg{Type: tea.KeyPgUp})
@@ -682,7 +682,7 @@ func feedCommentary(m *Model, n int) {
 	fresh := syntheticEntries(len(m.v.Narr.Entries), n)
 	m.v.Narr.Entries = append(m.v.Narr.Entries, fresh...)
 	if m.v.CommScroll > 0 {
-		m.v.CommScroll += commentaryTotalLines(fresh, frameWidth(m.v, m.cols))
+		m.v.CommScroll += commentaryTotalLines(fresh, nil, frameWidth(m.v, m.cols))
 	}
 }
 

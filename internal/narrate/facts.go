@@ -330,8 +330,10 @@ func (f *facts) slugsOf(agents []state.Agent) []string {
 	return out
 }
 
-// askGist names what an ask needs WITHOUT reprinting the command — the standup's
-// own sentences use this, and only the commentary quotes the bytes.
+// askGist names what an ask needs WITHOUT reprinting the command. It is the form
+// EVERY part of a frame uses while the ask is live: the standup's own sentences
+// always, and the commentary's log entry for as long as the band is drawing the
+// same bytes (Entry.Cmd, Entry.TextOn).
 //
 // §3.7 gives the exact string to the band's own row, verbatim, because that row
 // is what the reader approves. A sentence four rows under it that repeats the
@@ -340,6 +342,10 @@ func (f *facts) slugsOf(agents []state.Agent) []string {
 // prose says what KIND of answer is wanted and leaves the string to the row that
 // owns it — the mock does the same thing in its own words ("wants to clear it",
 // never the rm -rf).
+//
+// The invariant is whole-FRAME and not per region: fixing this per region is what
+// let the duplication come back twice, in a new pair of regions each time (band +
+// mustLines, then band + commentary).
 //
 // "one" is load-bearing: it says the thing the reader most wants to know that
 // the row does not already show, which is that this is a single decision.
@@ -368,14 +374,20 @@ func (f *facts) askGist(a state.Ask) string {
 }
 
 // askWhat names what an ask is asking for, from the payload kind (§3.7.1),
-// quoting the command verbatim. It is the COMMENTARY's form: a log entry is a
-// timestamped record of what was asked, it is the only place the approved bytes
-// survive once the band has cleared, and it is what keeps stripQuoted's job real
-// (a token inside a verbatim command is a shell token, not an agent).
+// quoting the command verbatim. It is the COMMENTARY's RECORD form: a log entry
+// is a timestamped record of what was asked, it is the only place the approved
+// bytes survive once the band has cleared, and it is what keeps stripQuoted's job
+// real (a token inside a verbatim command is a shell token, not an agent).
 //
-// The standup uses askGist instead. See it for why.
+// It is not printed while the band is showing the same bytes — see Entry.Cmd for
+// the ruling and Entry.TextOn for where it is applied. The standup never uses it
+// at all; askGist is its form. See it for why.
+//
+// The command is whitespace-collapsed, exactly as quoteCmd and the band's own
+// display copy (§13.1(b)) collapse it, so "the bytes the frame is showing" is one
+// string and not three spellings of one.
 func (f *facts) askWhat(a state.Ask) string {
-	cmd := strings.TrimSpace(a.Command)
+	cmd := normCmd(a.Command)
 	switch a.Kind {
 	case "command":
 		if cmd != "" {

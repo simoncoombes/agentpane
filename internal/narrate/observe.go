@@ -117,9 +117,20 @@ func observe(f *facts, mem *Memory) []Entry {
 	// --- asks ---
 	for _, ask := range f.w.Asks {
 		who := f.names.hinted(ask.AgentID, ask.Description)
-		cand = append(cand, Entry{Key: "ask:" + ask.Key, At: at(ask.RaisedAt), Tone: ToneAlert,
-			Text: fmt.Sprintf("%s stopped and asked for %s. Nothing it does next happens without you.",
-				who, f.askWhat(ask))})
+		// Both forms of the one entry (Entry.Cmd/Gist): the verbatim record and
+		// the paraphrase the renderer prints while the band still shows the bytes.
+		// Which one reaches the reader is the renderer's call, not this loop's —
+		// the log's content is fixed here and never rewritten.
+		const askTmpl = "%s stopped and asked for %s. Nothing it does next happens without you."
+		e := Entry{Key: "ask:" + ask.Key, At: at(ask.RaisedAt), Tone: ToneAlert,
+			Text: fmt.Sprintf(askTmpl, who, f.askWhat(ask))}
+		// Only when the sentence really does carry the WHOLE command. quoteCmd
+		// caps at cmdCap, and a capped command is already not the band's bytes, so
+		// the frame cannot be stating it twice and the log keeps its own wording.
+		if c := normCmd(ask.Command); c != "" && strings.Contains(e.Text, c) {
+			e.Cmd, e.Gist = c, fmt.Sprintf(askTmpl, who, f.askGist(ask))
+		}
+		cand = append(cand, e)
 		if ask.DupeCount > 1 {
 			cand = append(cand, inferEntry("ask:"+ask.Key+":dupes", at(ask.RaisedAt), ToneQuiet, fmt.Sprintf(
 				"%s arrived under fresh ids and are folded into that one entry, since you don't need telling %d times",
