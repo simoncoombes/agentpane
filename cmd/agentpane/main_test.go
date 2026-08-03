@@ -516,7 +516,7 @@ func TestDoctorRuns(t *testing.T) {
 	s := out.String()
 	for _, want := range []string{
 		"accent:", "live/primary", "agentpane hook",
-		"● ⚑ ○ ◇ ◌ ▪▫· ▁▂▃▄▅▆▇ ◐ ↺ ⤷ ╰─╮ ⠹",
+		"● ⚑ ○ ◇ ◌ ◍ ✔ ✖ ⚠ ▪▫· ▇ ▣ ▌ █ ◐ ↺ ⤷ │├╰─╮ ⠹⠿",
 		"cannot verify from a script",
 	} {
 		if !strings.Contains(s, want) {

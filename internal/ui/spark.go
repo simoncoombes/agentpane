@@ -2,62 +2,16 @@ package ui
 
 import "github.com/simoncoombes/agentpane/internal/state"
 
-// sparkCells is the §3.4 geometry: 7 cells over the trailing 60s.
+// The §3.4 row sparkline is WITHDRAWN (§13.3 Q5), and `▁▂▃▄▅▆` went with it:
+// the glyph table is closed, the row draws the shared-scale gauge instead
+// (gauge.go), and no render path may reintroduce a per-agent scale. What
+// survives here is the bucket arithmetic every consumer still needs — the
+// gauge's level, the §3.18 burn rate, and the inspector's own history — so
+// there is exactly one definition of "how much has this agent done lately".
+//
+// sparkCells stays as the folding width of that arithmetic: 7 cells over the
+// trailing 60s, which is what effectiveSpark reports a maximum for.
 const sparkCells = 7
-
-var sparkGlyphs = []rune("▁▂▃▄▅▆▇")
-
-// flatline is the all-empty sparkline (§2.6a: nothing is running and nothing
-// has happened).
-const flatline = "·······"
-
-// sparkline renders 7 cells from the agent's 60 one-second buckets, scaled
-// against the agent's own max (§3.4). metric is "tokens" or "calls"; when
-// every token bucket is zero but calls exist, it falls back to calls
-// automatically (§3.4). Empty buckets render ·. Never interpolated (C8).
-func sparkline(buckets [60]state.SparkBucket, metric string) string {
-	return sparklineScaled(buckets, metric, 0)
-}
-
-// sparklineScaled draws against at least floor, so a caller can hold a fallen
-// maximum steady (see UIState.sparkScale). floor 0 means "scale to the window",
-// the §3.4 rule.
-func sparklineScaled(buckets [60]state.SparkBucket, metric string, floor int) string {
-	vals := bucketize(buckets, metric)
-	if metric != "calls" && allZero(vals) {
-		if calls := bucketize(buckets, "calls"); !allZero(calls) {
-			vals = calls
-		}
-	}
-	max := 0
-	for _, v := range vals {
-		if v > max {
-			max = v
-		}
-	}
-	if max == 0 {
-		return flatline
-	}
-	if floor > max {
-		max = floor
-	}
-	out := make([]rune, sparkCells)
-	for i, v := range vals {
-		if v == 0 {
-			out[i] = '·'
-			continue
-		}
-		lvl := (v*len(sparkGlyphs) + max - 1) / max // ceil, 1..7
-		if lvl < 1 {
-			lvl = 1
-		}
-		if lvl > len(sparkGlyphs) {
-			lvl = len(sparkGlyphs)
-		}
-		out[i] = sparkGlyphs[lvl-1]
-	}
-	return string(out)
-}
 
 // bucketize folds 60 one-second buckets into 7 cells of ~8.5s each.
 func bucketize(buckets [60]state.SparkBucket, metric string) [sparkCells]int {
@@ -95,10 +49,10 @@ func tokensLastMinute(buckets [60]state.SparkBucket) int {
 	return n
 }
 
-// effectiveSpark reports the metric the sparkline will ACTUALLY draw (after
-// the tokens→calls fallback) and that window's max. The caller needs both:
-// holding a scale across a metric flip would apply a token-sized floor to a
-// call count.
+// effectiveSpark reports the metric the activity level is ACTUALLY measured in
+// (after the tokens→calls fallback, §3.4) and that window's max. Callers need
+// both: a token-sized number and a call count are not comparable, so anything
+// holding or sharing a scale has to know which one it is looking at.
 func effectiveSpark(buckets [60]state.SparkBucket, metric string) (string, int) {
 	vals := bucketize(buckets, metric)
 	if metric != "calls" && allZero(vals) {

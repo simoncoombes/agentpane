@@ -340,13 +340,35 @@ color = true              # false == NO_COLOR
 | `[` / `]` | previous / next run in idle or history view |
 | `1`-`9` | switch attached session (idle screen, only when unpinned and more than one session is live; no-op otherwise) |
 | `t` | cycle the right column: since-last-event, token burn rate (persisted) |
+| `n` | voice: standup + commentary, standup, off |
+| `⇞` / `⇟` | page the commentary; the inspector when it is open; the standup body when the commentary is hidden |
 | `esc` (on the digest) | dismiss the away-digest band (a live ask entry stays) |
 | `?` | key help overlay, dropped-event count, source name |
 | `ctrl-c` | quit agentpane; agents keep running (asks to confirm when agents are live) |
-| `p` / `n` | demo only: pause/resume, step one event |
+| `p` / `.` | demo only: pause/resume, step one event |
 
 There is no kill key. Pressing `x` explains why:
 `read-only — subagents cannot be killed`.
+
+## Narration
+
+Under the tree sit two fixed-height regions: a **standup** (7 rows, 11 when the
+commentary is hidden) and a **commentary** log (11 rows, newest at the bottom,
+auto-following unless you have scrolled up). `n` cycles them. Both are templated
+locally from event data - there is no model call, and the same world always
+produces the same words.
+
+The standup always reads in the same order: what you must do, what is at risk,
+then the state, ending on the action or on saying that none is needed. It counts
+everything from the world rather than from a template, marks its own bad calls
+when the state contradicts an earlier line, and hedges out loud whenever it is
+inferring rather than reporting.
+
+Narration sits below the tree so the tree's rows never move when a sentence gets
+longer or the voice changes. It is also drawn only when the tree can keep every
+row and every activity line: on a pane that the tree already fills, `n` selects
+the mode and says `no room`, and the region appears as soon as the pane grows.
+Narration may cost tool-call history and nothing else.
 
 ## Status bar (`--oneline`)
 

@@ -205,6 +205,15 @@ func replayView(t *testing.T, m *state.Machine, now time.Time) (string, state.Wo
 	return stripANSI(frame), w, v
 }
 
+// quietVerdictAt is the earliest instant at which a suppression verdict is
+// honest. §13.1 forbids suppressing an agent inside stuck_after of its spawn —
+// "recorded nothing" and "hasn't started yet" are the same picture for the first
+// seconds — and this capture spans ten, so the phantoms only leave the tree once
+// the replay is viewed past that threshold.
+func quietVerdictAt(base time.Time) time.Time {
+	return base.Add(state.DefaultConfig().StuckAfter + time.Second)
+}
+
 // branchLines counts rendered agent blocks: agentBlock opens each with exactly
 // one branch glyph line, so this is the number of rows the tree actually shows.
 func branchLines(frame string) int {
@@ -230,7 +239,15 @@ func TestReplay6dbbfaa6HooksAndTranscript(t *testing.T) {
 	tr.wait = hooks.done // transcript lands after the hooks, as it does live
 
 	m, seen := replay(t, hooks, tr)
-	now := base.Add(10 * time.Second)
+
+	// §13.1 first: inside stuck_after of their spawn NOTHING is suppressed. All
+	// forty-five are on the tree, because at ten seconds a phantom and an agent
+	// still thinking look identical and hiding a real one is the worse mistake.
+	if _, early, _ := replayView(t, m, base.Add(10*time.Second)); len(early.Quiet) != 0 {
+		t.Fatalf("suppressed %d agents inside stuck_after of their spawn", len(early.Quiet))
+	}
+
+	now := quietVerdictAt(base)
 	frame, w, _ := replayView(t, m, now)
 
 	if len(w.Agents) != 5 {
@@ -311,7 +328,7 @@ func TestReplay6dbbfaa6HooksOnly(t *testing.T) {
 	hooks := newSliceSource("hooks", hookEvents(t, base))
 
 	m, _ := replay(t, hooks)
-	now := base.Add(10 * time.Second)
+	now := quietVerdictAt(base)
 	frame, w, _ := replayView(t, m, now)
 
 	if len(w.Agents) != 5 {
@@ -430,7 +447,7 @@ func TestReplayPhantomNeverStealsARealName(t *testing.T) {
 			}
 			mach, _ := replay(t, newSliceSource("hooks", evs))
 
-			now := base.Add(10 * time.Second)
+			now := quietVerdictAt(base)
 			frame, w, _ := replayView(t, mach, now)
 			if len(w.Agents) != 1 || w.Agents[0].ID != realID {
 				t.Fatalf("rendered agents = %+v, want only the working one\n%s", w.Agents, frame)
@@ -493,7 +510,7 @@ func TestReplayQuietRowExpands(t *testing.T) {
 	base := time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC)
 	hooks := newSliceSource("hooks", hookEvents(t, base))
 	m, _ := replay(t, hooks)
-	now := base.Add(10 * time.Second)
+	now := quietVerdictAt(base)
 	m.Tick(now)
 	w := m.Snapshot()
 

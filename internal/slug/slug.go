@@ -51,6 +51,14 @@ type entry struct {
 	// hooks correlation, which matches a description to an agent id
 	// heuristically and can be wrong. Only a non-exact slug may be replaced.
 	exact bool
+	// published: this slug has left the pane — it went out in a notification or
+	// was read aloud in the standup. From then on it is the agent's name as far
+	// as the user is concerned and may never be replaced (§13.1).
+	published bool
+	// late is the exact description that arrived after publication. The slug
+	// keeps the guessed name for the rest of the run; this is what the inspector
+	// shows so the real one is still recorded somewhere.
+	late string
 }
 
 // Table hands out per-run stable slugs. It is not safe for concurrent use;
@@ -88,13 +96,56 @@ func (t *Table) Assign(agentID, description string) string {
 // slug is REPLACED — a stable wrong name is worse than a name that changes
 // once, and the correction is the whole point of tracking provenance. An
 // existing exact slug is never disturbed, so slugs still settle permanently.
+//
+// The replacement is silent and atomic by construction (§13.1): one table
+// write, no animation, no log line, and the next frame is the first the user
+// sees — a rename that is narrated or drawn twice reads as two agents.
+//
+// Once the guessed slug has been PUBLISHED — sent in a notification, spoken in
+// the standup — it is frozen. The correction is kept as the late name for the
+// inspector instead: a name that changes under the user mid-read costs more
+// than a slightly wrong one.
 func (t *Table) AssignExact(agentID, description string) string {
 	return t.assign(agentID, description, true)
+}
+
+// Publish records that agentID's slug has left the pane. Callers that send a
+// notification or write the agent into the standup must call it; from then on
+// the slug is the agent's name for the rest of the run.
+func (t *Table) Publish(agentID string) {
+	e, ok := t.byID[agentID]
+	if !ok || e.published {
+		return
+	}
+	e.published = true
+	t.byID[agentID] = e
+}
+
+// Published reports whether agentID's slug has been published, i.e. can no
+// longer be corrected.
+func (t *Table) Published(agentID string) bool {
+	return t.byID[agentID].published
+}
+
+// LateName is the exact description that arrived too late to rename the row
+// ("" when none did). The inspector shows it; nothing else may, or the rename
+// the freeze prevented happens anyway somewhere the user is reading.
+func (t *Table) LateName(agentID string) string {
+	return t.byID[agentID].late
 }
 
 func (t *Table) assign(agentID, description string, exact bool) string {
 	if e, ok := t.byID[agentID]; ok {
 		if !exact || e.exact {
+			return e.slug
+		}
+		if e.published {
+			// Frozen: keep the published name, record the truth for the
+			// inspector (§13.1).
+			if strings.TrimSpace(description) != "" {
+				e.late = description
+				t.byID[agentID] = e
+			}
 			return e.slug
 		}
 		// Release the guessed slug so the corrected one may reuse the name.

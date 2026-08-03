@@ -254,10 +254,25 @@ func doctorReport(w io.Writer, session string) int {
 	// Spark metric + fallback.
 	ok("spark: %q configured — an agent with no token telemetry falls back to calls at render time; the fallback is visible on the row, not from this script (§3.4)", cfg.Spark)
 
+	// Suppressed agents (§1.5, §13.3 Q8). doctor cannot count them: they exist
+	// only in an attached pane's state.Machine, and a one-shot process has no
+	// snapshot to read — the counted-but-unrendered agents are never written to
+	// disk. What it can do is name the one screen that settles the question,
+	// because "+n agents with no recorded activity" is the line people mistrust
+	// and nothing in a settings scan confirms or denies it.
+	warn("suppressed agents: not countable from a script — they live in the attached pane's model, never on disk")
+	fmt.Fprintln(w, "    if \"+n agents with no recorded activity\" looks wrong, select that line in the pane and press ⏎:")
+	fmt.Fprintln(w, "    the inspector lists every suppressed agent's id, type, spawn time and last event")
+	fmt.Fprintln(w, "    equal spawn and last-event times mean it announced itself and returned; a later last event")
+	fmt.Fprintln(w, "    means it did work the row rule never saw, and that one is not a phantom")
+
 	// Glyph coverage.
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  glyph sample — every glyph below must render one cell wide, no boxes:")
-	fmt.Fprintln(w, "  ● ⚑ ○ ◇ ◌ ▪▫· ▁▂▃▄▅▆▇ ◐ ↺ ⤷ ╰─╮ ⠹")
+	// The §13.3 Q5 table, complete and final: ▁▂▃▄▅▆ are withdrawn with the
+	// sparkline, so probing them would ask the user to check a font for glyphs
+	// nothing draws any more.
+	fmt.Fprintln(w, "  ● ⚑ ○ ◇ ◌ ◍ ✔ ✖ ⚠ ▪▫· ▇ ▣ ▌ █ ◐ ↺ ⤷ │├╰─╮ ⠹⠿")
 	fmt.Fprintln(w)
 
 	// Capabilities that cannot be probed one-shot.

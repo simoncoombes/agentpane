@@ -6,6 +6,7 @@ package event
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -34,7 +35,17 @@ type Event struct {
 	AgentType string // e.g. "general-purpose"; empty when unknown
 	Kind      Kind
 	Tool      string // "Bash" | "Edit" | "Read" | "Grep" | "Agent" | ...
-	Target    string // file path, command, or pattern (raw; UI shortens)
+	// Target is the file path, command or pattern, FLATTENED on ingest
+	// (§13.1: one line, whitespace runs collapsed, control characters gone).
+	// Nothing downstream may assume it is byte-identical to what the tool ran —
+	// RawTarget is.
+	Target string
+	// RawTarget is Target before flattening: the exact bytes the tool ran. It
+	// is set only when flattening changed something, so TargetRaw() is the
+	// accessor to use. `y` yanks this, never the flattened form (§13.1): a
+	// python3 -c one-liner with its newlines turned into spaces is no longer a
+	// command you can paste.
+	RawTarget string
 	// Says is the tool's own human summary of the call (the Bash tool's
 	// `description`: "Hold an open 45s foreground call on main"). Target keeps
 	// the raw command, because contention, open-file tracking and yanking all
@@ -53,6 +64,128 @@ type Event struct {
 	Err       string          // error text, empty if none
 	Ask       *AskPayload     // non-nil only for PermissionRequested
 	Raw       json.RawMessage // original payload for the debug ring
+}
+
+// TargetRaw is the exact text the tool ran: RawTarget when flattening changed
+// Target, Target itself otherwise. Every yank, every clipboard path and
+// anything that re-runs a command must use this, not Target.
+func (e Event) TargetRaw() string {
+	if e.RawTarget != "" {
+		return e.RawTarget
+	}
+	return e.Target
+}
+
+// flattenMax caps flattened text in runes. Rows are at most ~200 columns and
+// the inspector shows one line per call, so anything past this can only be
+// stored, never shown — and a megabyte heredoc kept per call in the ring is a
+// leak, not information. The original is still reachable through TargetRaw.
+const flattenMax = 240
+
+// FlattenText is the §13.1 ingest flattener: runs of whitespace (newlines and
+// tabs included) collapse to one space, control characters are dropped, the
+// result is trimmed, and only then is it truncated to flattenMax runes.
+//
+// Truncating last is the whole point of the order: a newline has zero display
+// width, so cutting first counts characters the terminal will never show and
+// throws away the text that would have been visible.
+func FlattenText(s string) string {
+	if flat(s) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	space := false // pending separator, written only before real content
+	runes := 0
+	for _, r := range s {
+		switch {
+		case r == 0x7f, r < 0x20 && r != '\t' && r != '\n' && r != '\r' && r != '\v' && r != '\f':
+			continue // control characters carry no meaning and move the cursor
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\v' || r == '\f':
+			space = b.Len() > 0
+			continue
+		}
+		if space {
+			if runes >= flattenMax {
+				return b.String() + "…"
+			}
+			b.WriteByte(' ')
+			runes++
+			space = false
+		}
+		if runes >= flattenMax {
+			return b.String() + "…"
+		}
+		b.WriteRune(r)
+		runes++
+	}
+	return b.String()
+}
+
+// flat reports whether s already satisfies FlattenText, so the common path
+// allocates nothing.
+func flat(s string) bool {
+	prevSpace := true // a leading space would be trimmed
+	n := 0
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+		if r == ' ' {
+			if prevSpace {
+				return false
+			}
+			prevSpace = true
+		} else {
+			prevSpace = false
+		}
+		n++
+		if n > flattenMax {
+			return false
+		}
+	}
+	return !prevSpace || s == ""
+}
+
+// Flattened returns ev with its display text flattened for the row, keeping the
+// original command in RawTarget. Sources call it at ingest so no draw-time code
+// has to defend the frame's geometry (§13.1: flatten on ingest, not at draw
+// time); the state machine calls it again defensively, which is a no-op on
+// already-flattened text.
+//
+// Says (the tool's own one-line description) and the human summary in Detail
+// are display text and are flattened in place. Detail is NOT flattened where it
+// carries verbatim content that something else owns: the user's prompt, the
+// session title, an agent's final message and error text are quoted, wrapped or
+// yanked elsewhere, and collapsing a paragraph into one long line there would
+// destroy the only copy.
+func Flattened(ev Event) Event {
+	if t := FlattenText(ev.Target); t != ev.Target {
+		if ev.RawTarget == "" {
+			ev.RawTarget = ev.Target
+		}
+		ev.Target = t
+	}
+	ev.Says = FlattenText(ev.Says)
+	if flattenDetail(ev.Kind) {
+		ev.Detail = FlattenText(ev.Detail)
+	}
+	if ev.Ask != nil && ev.Ask.Detail != "" {
+		cp := *ev.Ask
+		cp.Detail = FlattenText(cp.Detail)
+		ev.Ask = &cp
+	}
+	return ev
+}
+
+// flattenDetail reports whether this kind's Detail is display text the pane
+// owns (true) or verbatim content it is merely carrying (false).
+func flattenDetail(k Kind) bool {
+	switch k {
+	case UserPromptSubmitted, SessionTitled, AgentReturned, AgentMerged, ErrorRaised:
+		return false
+	}
+	return true
 }
 
 type AskPayload struct {

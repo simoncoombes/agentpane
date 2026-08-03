@@ -23,8 +23,20 @@ var (
 	// watchRe catches the §2.5 canonical stuck case; the bare -w flag is
 	// matched as a whole token separately.
 	watchRe = regexp.MustCompile(`--watch\b|\bnodemon\b|\btail\s+-f\b`)
-	// verifyRe is the §2.2 inferred-verify heuristic over Bash commands.
+	// verifyRe is the §2.2 inferred-verify heuristic over the Bash command
+	// itself.
 	verifyRe = regexp.MustCompile(`(?i)\b(tests?|lint|type-?check|vet|build)\b`)
+	// verifySaysRe reads the tool's own description (event.Says) to recognise a
+	// check whose command does not say so — `pnpm -s ci:all`, `make -s gate`
+	// (§13.3 Q6: use the description to improve accuracy).
+	//
+	// It requires a verb of EXECUTION, because intent is not evidence: "run the
+	// auth suite" describes a check being performed, while "fix the failing
+	// tests" and "write a test for the parser" describe work ABOUT tests and
+	// must never earn the marker. The exit code is still the only thing that
+	// decides which marker.
+	verifySaysRe = regexp.MustCompile(
+		`(?i)\b(?:run|runs|running|re-?run|re-?runs|execute|executes|check|checks|verify|verifies)\b[^.]{0,32}?\b(?:tests?|suite|specs?|lint|type-?checks?|vet|build)\b`)
 )
 
 // Machine consumes source events and derives everything the platform cannot
@@ -113,7 +125,7 @@ type agentState struct {
 	status     Status
 	station    int
 	retries    int
-	verified   bool
+	verify     VerifyState
 	decayed    bool
 	spawnIndex int
 
@@ -127,6 +139,7 @@ type agentState struct {
 	currentTool   string
 	currentTarget string
 	activity      string
+	activityRaw   string
 	openFile      string
 	lastError     string
 	lastMessage   string
@@ -269,6 +282,13 @@ func (m *Machine) Apply(ev event.Event, now time.Time) []event.Event {
 	if !m.firstTime(ev) {
 		return nil
 	}
+	// Sources flatten at ingest (§13.1) and the mux guarantees it for every
+	// stack the binary builds. This second call is for the paths that feed a
+	// machine directly — replays, the demo harness, tests — and is a no-op on
+	// text that is already one line, so the invariant holds however the world
+	// was fed: everything stored for display is row-shaped, everything stored
+	// for `y` is the original.
+	ev = event.Flattened(ev)
 	at := ev.At
 	if at.IsZero() {
 		at = now
@@ -356,12 +376,17 @@ func (m *Machine) Tick(now time.Time) []event.Event {
 		if a.folded || a.teammate {
 			continue
 		}
-		if m.quiet(a) {
+		if m.recordedNothing(a) {
 			// An agent that has shown nothing at all cannot stall, decay or go
 			// unknown: silence is all it has ever produced, so a derived alert
 			// about it would be an alert about nothing — and a StallDetected
 			// would put an unnamed phantom in the NEEDS YOU band and count a
 			// stall against the run (§1.5, Machine.quiet).
+			//
+			// This is the evidence test, NOT the display one: an empty agent is
+			// rendered for its first stuck_after (§13.1) and must still be
+			// spared these derivations for the whole run, or the moment it
+			// crossed the threshold it would earn a permanent row by stalling.
 			continue
 		}
 		silence := now.Sub(a.lastEventAt)
@@ -535,7 +560,30 @@ func (m *Machine) Snapshot() World {
 //
 // Teammates are never suppressed: they are a declared low-telemetry class
 // (§3.15) and they always have a name.
+//
+// §13.1 amendment: "no recorded activity" means no tool call and no tokens, NOT
+// "nothing yet". An agent spawned two seconds ago has shown nothing either, and
+// hiding a real agent during its first breath is far worse than carrying a
+// phantom row for a while — so suppression also waits for the agent to have
+// been silent past stuck_after with nothing recorded. Row eligibility is still
+// evidence-based; this only delays the negative verdict until the evidence has
+// had time to arrive.
 func (m *Machine) quiet(a *agentState) bool {
+	if !m.recordedNothing(a) {
+		return false
+	}
+	return m.pastFirstBreath(a)
+}
+
+// recordedNothing is the evidence half of the rule: this agent has shown none
+// of the things that earn a row, now or ever (the answer is latched in
+// agentState.earned once it flips).
+//
+// It is the predicate for every decision that must not be made about an empty
+// agent regardless of how long it has existed: no stall, decay or unknown
+// derivation (a StallDetected would put an unnamed phantom in the NEEDS YOU
+// band and count a stall against the run), and no bar in a run summary.
+func (m *Machine) recordedNothing(a *agentState) bool {
 	if a.earned {
 		return false
 	}
@@ -544,6 +592,28 @@ func (m *Machine) quiet(a *agentState) bool {
 		return false
 	}
 	return true
+}
+
+// pastFirstBreath reports whether an agent has had long enough to show
+// something: stuck_after since it was announced AND stuck_after of silence.
+// Both, because the two differ — an agent that keeps emitting events which earn
+// nothing (a bare notification) is not a phantom that never woke up, and a
+// clock skewed spawn time must not suppress a row on its own.
+func (m *Machine) pastFirstBreath(a *agentState) bool {
+	if m.now.IsZero() {
+		return false
+	}
+	if m.now.Sub(a.spawnedAt) < m.cfg.StuckAfter {
+		return false
+	}
+	if a.status == StatusDone {
+		// A returned agent will never record anything, so its silence clock can
+		// only postpone a verdict that cannot change. The spawn floor still
+		// applies: a phantom that starts and stops in the same second keeps its
+		// row for the first breath like everything else.
+		return true
+	}
+	return m.now.Sub(a.lastEventAt) >= m.cfg.StuckAfter
 }
 
 // earnsRow is the unlatched half of the rule documented on Machine.quiet:
@@ -660,7 +730,7 @@ func (m *Machine) applyAgentEvent(ev event.Event, now, at time.Time) []event.Eve
 		if ev.Target != "" {
 			a.openFile = ev.Target
 		}
-		setActivity(&a.activity, ev)
+		setActivity(&a.activity, &a.activityRaw, ev)
 	case event.FileEdited:
 		out = append(out, m.fileEdited(a, ev, now, at)...)
 	case event.TokensUpdated:
@@ -669,7 +739,7 @@ func (m *Machine) applyAgentEvent(ev event.Event, now, at time.Time) []event.Eve
 		// Labels past activity only; must never change a stall
 		// threshold (§2.5).
 		if ev.Detail != "" {
-			a.activity = ev.Detail
+			a.activity, a.activityRaw = ev.Detail, ""
 		}
 	case event.PermissionRequested:
 		out = append(out, m.raiseAsk(a.id, a.name, a, ev, now, at)...)
@@ -684,7 +754,7 @@ func (m *Machine) applyAgentEvent(ev event.Event, now, at time.Time) []event.Eve
 		a.ask = nil
 	case event.NotificationRaised:
 		if ev.Detail != "" {
-			a.activity = ev.Detail
+			a.activity, a.activityRaw = ev.Detail, ""
 		}
 	case event.ErrorRaised:
 		if ev.Err != "" {
@@ -776,11 +846,11 @@ func (m *Machine) toolStart(a *agentState, ev event.Event, now, at time.Time) []
 	}
 	a.station = max(a.station, 1)
 	a.currentTool, a.currentTarget = ev.Tool, ev.Target
-	setActivity(&a.activity, ev)
-	a.open = &OpenCall{Tool: ev.Tool, Target: ev.Target, Since: at}
+	setActivity(&a.activity, &a.activityRaw, ev)
+	a.open = &OpenCall{Tool: ev.Tool, Target: ev.Target, RawTarget: ev.RawTarget, Since: at}
 	a.bucket(at).Calls++
 	out = append(out, m.derived(event.CallOpened, a.id, now, ev.Tool, ev.Target, ""))
-	if _, failed := a.failedCmds[cmdKey(ev.Tool, ev.Target)]; failed {
+	if _, failed := a.failedCmds[cmdKey(ev.Tool, ev.TargetRaw())]; failed {
 		a.retries++
 		out = append(out, m.derived(event.RetryInferred, a.id, now, ev.Tool, ev.Target, fmt.Sprintf("retry %d (inferred)", a.retries)))
 	}
@@ -790,20 +860,24 @@ func (m *Machine) toolStart(a *agentState, ev event.Event, now, at time.Time) []
 func (m *Machine) toolEnd(a *agentState, ev event.Event, now, at time.Time) []event.Event {
 	var out []event.Event
 	a.station = max(a.station, 1)
-	tool, target := ev.Tool, ev.Target
+	tool, target, raw := ev.Tool, ev.Target, ev.RawTarget
 	if a.open != nil && (ev.Tool == "" || ev.Tool == a.open.Tool) {
 		if tool == "" {
 			tool = a.open.Tool
 		}
 		if target == "" {
-			target = a.open.Target
+			target, raw = a.open.Target, a.open.RawTarget
 		}
 		a.open = nil
 		out = append(out, m.derived(event.CallClosed, a.id, now, tool, target, ""))
 	}
 	failed := ev.Err != "" || (ev.ExitCode != nil && *ev.ExitCode != 0)
-	a.appendCall(Call{Tool: tool, Target: target, Err: failed, Meta: callMeta(ev), At: at})
-	key := cmdKey(tool, target)
+	a.appendCall(Call{Tool: tool, Target: target, RawTarget: raw, Err: failed, Meta: callMeta(ev), At: at})
+	// Retry inference and the verify heuristic both read the EXACT command:
+	// flattening caps display text, and two long commands sharing a prefix must
+	// not look like one command run twice.
+	exact := rawOr(target, raw)
+	key := cmdKey(tool, exact)
 	if failed {
 		a.failedCmds[key] = struct{}{}
 		if ev.Err != "" {
@@ -814,17 +888,51 @@ func (m *Machine) toolEnd(a *agentState, ev event.Event, now, at time.Time) []ev
 	} else {
 		delete(a.failedCmds, key)
 	}
-	if !failed && tool == "Bash" && !a.verified && verifyRe.MatchString(target) {
-		// §2.2/§3.14 inferred verify: only a check that completed
-		// successfully counts — §2.10 grants the marker to run-auth-tests'
-		// passing suite, never to fix-ts2345's failing typechecks.
-		a.verified = true
-		out = append(out, m.derived(event.VerifyObserved, a.id, now, tool, target, "verify pattern matched (inferred)"))
-	}
+	out = append(out, m.observeVerify(a, tool, exact, ev.Says, failed, now)...)
 	a.currentTool, a.currentTarget = tool, target
-	setActivity(&a.activity, ev)
+	setActivity(&a.activity, &a.activityRaw, ev)
 	a.bucket(at).Calls++
 	return out
+}
+
+// observeVerify applies the §13.3 Q6 split to a call that has just COMPLETED:
+// a zero exit sets VerifyOK, a non-zero one VerifyFailed, and a call that is
+// still open reaches here at all — toolEnd is the only caller, so an open
+// command can never assert either.
+//
+// The latest outcome wins rather than latching the first: an agent whose suite
+// passed and then broke is not "verified", and one that fixed a failing suite
+// is. Only a transition emits VerifyObserved, so a row re-running a green suite
+// does not narrate the same fact every 30 seconds. There is deliberately no
+// derived kind for the failing direction: VerifyObserved renders as
+// "✓ verified" in the log, the failing ToolEnd is already logged with its exit
+// code, and inventing a second inference to describe it would say nothing the
+// row does not.
+func (m *Machine) observeVerify(a *agentState, tool, target, says string, failed bool, now time.Time) []event.Event {
+	if tool != "Bash" || !isVerifyCommand(target, says) {
+		return nil
+	}
+	want := VerifyOK
+	if failed {
+		want = VerifyFailed
+	}
+	if a.verify == want {
+		return nil
+	}
+	a.verify = want
+	if want == VerifyFailed {
+		m.bumpRev()
+		return nil
+	}
+	return []event.Event{m.derived(event.VerifyObserved, a.id, now, tool, target,
+		"verify pattern matched (inferred)")}
+}
+
+// isVerifyCommand reports whether a completed Bash call was a verification: the
+// command text says so, or the tool's own description says it was RUNNING one
+// (§13.3 Q6 — see verifySaysRe on why the verb matters).
+func isVerifyCommand(target, says string) bool {
+	return verifyRe.MatchString(target) || verifySaysRe.MatchString(says)
 }
 
 func (m *Machine) fileEdited(a *agentState, ev event.Event, now, at time.Time) []event.Event {
@@ -832,7 +940,7 @@ func (m *Machine) fileEdited(a *agentState, ev event.Event, now, at time.Time) [
 	a.station = max(a.station, 2)
 	a.linesAdd += ev.LinesAdd
 	a.linesDel += ev.LinesDel
-	setActivity(&a.activity, ev)
+	setActivity(&a.activity, &a.activityRaw, ev)
 	if ev.Target != "" {
 		a.openFile = ev.Target
 		if _, seen := a.editedFiles[ev.Target]; !seen {
@@ -869,12 +977,12 @@ func (m *Machine) applyMainEvent(ev event.Event, now, at time.Time) []event.Even
 				m.main.todo = ev.Detail
 			}
 		} else {
-			setActivity(&m.main.activity, ev)
+			setActivity(&m.main.activity, nil, ev)
 		}
 	case event.FileRead:
-		setActivity(&m.main.activity, ev)
+		setActivity(&m.main.activity, nil, ev)
 	case event.FileEdited:
-		setActivity(&m.main.activity, ev)
+		setActivity(&m.main.activity, nil, ev)
 		if ev.Target != "" {
 			if _, seen := m.main.editedFiles[ev.Target]; !seen {
 				m.main.editedFiles[ev.Target] = struct{}{}
@@ -903,7 +1011,11 @@ func (m *Machine) raiseAsk(agentID, agentName string, a *agentState, ev event.Ev
 		}
 	}
 	tool := ev.Tool
-	cmd := ev.Target
+	// §3.7.1 wants the EXACT command in the band, and `y` copies it to answer
+	// the ask elsewhere — so the ask keeps the pre-flatten bytes even though
+	// the row that shows it is flattened (§13.1). askKey normalises whitespace
+	// anyway, so dedupe is unaffected either way.
+	cmd := ev.TargetRaw()
 	kind := ""
 	var payload *event.AskPayload
 	if ev.Ask != nil {
@@ -1119,10 +1231,12 @@ func (m *Machine) buildRun(now, endedAt time.Time) Run {
 	}
 	for _, id := range m.run.members {
 		a := m.agents[id]
-		if a == nil || a.folded || m.quiet(a) {
+		if a == nil || a.folded || m.recordedNothing(a) {
 			// A run summary is a per-agent bar chart; an agent with no name
 			// and no observed work has no bar to draw, and forty of them
 			// would relocate the phantom-row problem into the run history.
+			// Evidence, not the display grace: a finished run is judged on what
+			// its agents did, not on how recently they were announced.
 			continue
 		}
 		end := ref
@@ -1234,32 +1348,34 @@ func (m *Machine) agentDisplayName(id string) string {
 
 func (m *Machine) snapshotAgent(a *agentState) Agent {
 	out := Agent{
-		ID:            a.id,
-		Name:          a.name,
-		NameExact:     a.nameExact,
-		Type:          a.typ,
-		Teammate:      a.teammate,
-		Status:        a.status,
-		Station:       a.station,
-		Retries:       a.retries,
-		Verified:      a.verified,
-		Decayed:       a.decayed,
-		SpawnIndex:    a.spawnIndex,
-		SpawnedAt:     a.spawnedAt,
-		LastEventAt:   a.lastEventAt,
-		DoneAt:        a.doneAt,
-		Tokens:        a.tokens,
-		LinesAdd:      a.linesAdd,
-		LinesDel:      a.linesDel,
-		CurrentTool:   a.currentTool,
-		CurrentTarget: a.currentTarget,
-		ActivityLine:  a.activity,
-		OpenFile:      a.openFile,
-		LastError:     a.lastError,
-		LastMessage:   a.lastMessage,
-		TotalCalls:    a.totalCalls,
-		EditedFiles:   sortedKeys(a.editedFiles),
-		Rev:           a.rev,
+		ID:              a.id,
+		Name:            a.name,
+		NameExact:       a.nameExact,
+		Type:            a.typ,
+		Teammate:        a.teammate,
+		Status:          a.status,
+		Station:         a.station,
+		Retries:         a.retries,
+		Verify:          a.verify,
+		Verified:        a.verify == VerifyOK,
+		Decayed:         a.decayed,
+		SpawnIndex:      a.spawnIndex,
+		SpawnedAt:       a.spawnedAt,
+		LastEventAt:     a.lastEventAt,
+		DoneAt:          a.doneAt,
+		Tokens:          a.tokens,
+		LinesAdd:        a.linesAdd,
+		LinesDel:        a.linesDel,
+		CurrentTool:     a.currentTool,
+		CurrentTarget:   a.currentTarget,
+		ActivityLine:    a.activity,
+		RawActivityLine: a.activityRaw,
+		OpenFile:        a.openFile,
+		LastError:       a.lastError,
+		LastMessage:     a.lastMessage,
+		TotalCalls:      a.totalCalls,
+		EditedFiles:     sortedKeys(a.editedFiles),
+		Rev:             a.rev,
 	}
 	if a.open != nil {
 		oc := *a.open
@@ -1339,7 +1455,7 @@ func (a *agentState) mergeEditCall(ev event.Event, at time.Time) {
 	if tool == "" {
 		tool = "Edit"
 	}
-	a.appendCall(Call{Tool: tool, Target: ev.Target, Meta: meta, At: at})
+	a.appendCall(Call{Tool: tool, Target: ev.Target, RawTarget: ev.RawTarget, Meta: meta, At: at})
 }
 
 // accrueTokens folds an event's token report into a running total, handling
@@ -1388,21 +1504,35 @@ func isEditTool(tool string) bool {
 // rendered rows as a bare "144ms" — a fact about the last call, not a
 // description of the work. Detail is the right answer only when there is no
 // tool to name (AgentReturned's final message, a TodoWrite's current item).
-func setActivity(dst *string, ev event.Event) {
+//
+// raw may be nil. When it is not, it receives the pre-flatten form of the same
+// line — set only when it differs, so `y` can yank the command the tool really
+// ran while the row keeps the one-line version (§13.1).
+func setActivity(dst, raw *string, ev event.Event) {
+	set := func(display, original string) {
+		*dst = display
+		if raw == nil {
+			return
+		}
+		if original == display {
+			original = ""
+		}
+		*raw = original
+	}
 	// The tool's own human summary wins: "Hold an open 45s foreground call on
 	// main" beats `end=$(( $(date +%s) + 45 )); until [ "$(date +%…` truncated
-	// mid-expression. The raw target is still what Target carries, so yanking,
+	// mid-expression. Target still carries the command, so yanking,
 	// contention and the open-file tracker are unaffected.
 	if s := strings.TrimSpace(ev.Says); s != "" {
-		*dst = s
+		set(s, s)
 		return
 	}
 	if s := strings.TrimSpace(ev.Tool + " " + ev.Target); s != "" {
-		*dst = s
+		set(s, strings.TrimSpace(ev.Tool+" "+ev.TargetRaw()))
 		return
 	}
 	if ev.Detail != "" {
-		*dst = ev.Detail
+		set(ev.Detail, ev.Detail)
 	}
 }
 
@@ -1433,6 +1563,15 @@ func normInput(s string) string {
 
 func askKey(tool, cmd string) string {
 	return tool + "\x00" + normInput(cmd)
+}
+
+// rawOr is the exact form of a command: the pre-flatten bytes when they were
+// kept, the flattened text otherwise.
+func rawOr(target, raw string) string {
+	if raw != "" {
+		return raw
+	}
+	return target
 }
 
 func cmdKey(tool, target string) string {

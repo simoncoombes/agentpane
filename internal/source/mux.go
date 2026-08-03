@@ -4,6 +4,13 @@
 //
 // The mux owns two responsibilities beyond plain fan-in:
 //
+//  0. Ingest flattening (§13.1). Tool text arrives multi-line — a `python3 -c`
+//     one-liner, a heredoc, a stack trace — and a newline has zero display
+//     width, so a row carrying one silently becomes several physical lines. The
+//     mux flattens Target, Says and the display half of Detail as events pass,
+//     keeping the exact command in RawTarget, so no draw-time code has to
+//     defend the frame and `y` still yanks what the tool really ran.
+//
 //  1. Seq reassignment. Every source numbers its own events from 1, and the
 //     state machine's dedupe is keyed on (AgentID, Kind, Seq) — per-source
 //     sequences collide, so the mux assigns one global monotonic Seq at
@@ -162,6 +169,12 @@ func mux(ctx context.Context, clock func() time.Time, sources ...event.Source) (
 			}
 			st.seq++
 			ev.Seq = st.seq
+			// Ingest is the one place multi-line tool text is flattened
+			// (§13.1): every consumer downstream — the state machine, the
+			// inspector log, the debug ring — then receives text that is
+			// already one row wide, and the exact bytes survive in RawTarget
+			// for `y`.
+			ev = event.Flattened(ev)
 			select {
 			case out <- ev:
 			case <-ctx.Done():

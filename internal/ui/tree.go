@@ -39,6 +39,15 @@ type treeResult struct {
 	lines      [][]seg
 	ids        []string // parallel to lines
 	scrollInfo string   // "12–20 / 43" when the agent list is windowed
+	// breadth reports that the breadth pass finished: every agent that can
+	// expand got its activity line, so the tree is saying what everything is
+	// doing and only tool-call HISTORY was rationed.
+	//
+	// It exists for narrationPlan (§13.2/§13.4), which must know the difference
+	// between "the tree gave up call history" (fine — the mock's own budget
+	// shrinks 14→8→4 as the voice grows) and "the tree gave up telling you what
+	// an agent is doing" (never acceptable for prose).
+	breadth bool
 }
 
 // renderTree renders main plus every subagent into at most avail lines,
@@ -221,7 +230,13 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 		}
 	}
 
-	res := treeResult{}
+	res := treeResult{breadth: true}
+	for _, a := range autoExpandOrder(agents) {
+		if expandable(a) && !expanded[a.ID] {
+			res.breadth = false
+			break
+		}
+	}
 	emit := func(b block) {
 		for _, ln := range b.lines {
 			res.lines = append(res.lines, ln)
@@ -423,24 +438,74 @@ func mainBlock(w state.World, v *UIState, agents []state.Agent, width int, now t
 	}
 	out := [][]seg{l1}
 
-	todo := w.Main.Todo
-	if todo == "" {
-		todo = w.Main.Activity
-	}
 	trunk := trunkOnly
 	if len(agents) == 0 {
 		trunk = trunkAbsent
 	}
-	if todo != "" {
+	if waiting := mainWaiting(w, agents); waiting != "" {
 		since := ""
 		if !w.Main.LastEventAt.IsZero() {
 			since = formatSince(now.Sub(w.Main.LastEventAt))
 		}
 		out = append(out, composeLR(
-			line(seg{trunk, pal.Struct}, seg{todo, pal.Primary}),
+			line(seg{trunk, pal.Struct}, seg{waiting, pal.Primary}),
 			line(seg{since, pal.Deep}), width))
 	}
 	return out
+}
+
+// mainWaiting is main's line 2 (§13.3 Q7): what main is WAITING ON, in
+// precedence blocked-on summary → current todo item → current activity.
+//
+// The todo used to lead. It cannot: TodoWrite is optional and most sessions
+// never call it (platform fact 5), so leading with it left the most valuable
+// line in the tree empty most of the time. Whether main is blocked is always
+// knowable from the world, and it is the one thing about the root row worth a
+// line of its own.
+func mainWaiting(w state.World, agents []state.Agent) string {
+	if s := blockedOn(w, agents); s != "" {
+		return s
+	}
+	if w.Main.Todo != "" {
+		return w.Main.Todo
+	}
+	return w.Main.Activity
+}
+
+// blockedOn derives the blocked-on summary, "" when nothing is blocked. Every
+// number in it is counted from the world — the line is assembled, never a
+// literal (§13.2: every count is derived).
+//
+// "holding" names what main is sitting on: agents that exist and cannot
+// progress (asking or queued). "waiting on you" is added only while an ask is
+// actually outstanding, because that is the only case where the user is the
+// blocker, and it goes last so the row ends on the thing to do about it.
+func blockedOn(w state.World, agents []state.Agent) string {
+	held := 0
+	for _, a := range agents {
+		switch a.Status {
+		case state.StatusAsk, state.StatusQueued:
+			held++
+		}
+	}
+	switch {
+	case len(w.Asks) > 0 && held > 0:
+		return "holding " + countNoun(held, "agent") + " · waiting on you"
+	case len(w.Asks) > 0:
+		return "waiting on you"
+	case held > 0:
+		return "holding " + countNoun(held, "agent")
+	}
+	return ""
+}
+
+// countNoun is "1 agent" / "2 agents": derived counts read as English or they
+// read as debug output.
+func countNoun(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // mainLabel is the workstream text on main's row, in priority order:
@@ -532,20 +597,36 @@ func agentBlock(w state.World, v *UIState, a state.Agent, last, expanded bool, r
 	b.lines = append(b.lines, line(seg{branch, pal.Struct}))
 
 	// Line 1: <dot|⚑> <slug>[  ↺n][  tail] … right side per §2.6a.
+	//
+	// §13.3 Q3 fixes what may give way here: the slug and the right-hand number
+	// are never dropped and never truncated, so when the line does not fit, the
+	// gauge narrows to gaugeCellsNarrow first and only then does the collapsed
+	// tail go. composeLR would otherwise cut the left side — i.e. the slug —
+	// which is the one thing the row cannot lose.
 	dot, dotStyle, nameStyle := rowGlyph(a, pal)
-	left := line(
-		seg{rowPre, pal.Struct},
-		seg{dot, dotStyle},
-		seg{" " + sl, nameStyle},
-	)
-	if a.Retries > 0 && a.Status != state.StatusDone {
-		left = append(left, seg{fmt.Sprintf("  ↺%d", a.Retries), pal.Deep})
+	headLine := func(cells int, tail bool) ([]seg, int) {
+		left := line(
+			seg{rowPre, pal.Struct},
+			seg{dot, dotStyle},
+			seg{" " + sl, nameStyle},
+		)
+		if a.Retries > 0 && a.Status != state.StatusDone {
+			left = append(left, seg{fmt.Sprintf("  ↺%d", a.Retries), pal.Deep})
+		}
+		if tail {
+			if t := rowTail(a, now, pinnedNoRoom); t != "" {
+				left = append(left, seg{"  " + t, pal.Settled})
+			}
+		}
+		right := rowRight(a, v, cells, runMax, now, pal)
+		return composeLR(left, right, width), overflow(left, right, width)
 	}
-	if tail := rowTail(a, now, pinnedNoRoom); tail != "" {
-		left = append(left, seg{"  " + tail, pal.Settled})
+	l1, over := headLine(gaugeCells, true)
+	if over > 0 {
+		if l1, over = headLine(gaugeCellsNarrow, true); over > 0 {
+			l1, _ = headLine(gaugeCellsNarrow, false)
+		}
 	}
-	right := rowRight(a, v, wide, runMax, now, pal)
-	l1 := composeLR(left, right, width)
 	if selected {
 		l1 = reverseLine(l1)
 	}
@@ -576,17 +657,20 @@ func agentBlock(w state.World, v *UIState, a state.Agent, last, expanded bool, r
 		actStyle = pal.NeedsYou
 	}
 	done := a.Status == state.StatusDone
-	// §3.1 degradation order on this line: the station label drops before
-	// the inferred ✓ verified marker; the activity text is truncated only
-	// after both are gone. Pips and tokens always survive at wide.
+	// §13.3 Q3 degradation order on this line: the station LABEL goes first —
+	// the pips carry the meaning and the word is a gloss — and the inferred
+	// verify marker goes last, after everything else has already gone. That
+	// reverses the old order, which spent the marker to keep a label.
 	actLine := func(verified, label bool) ([]seg, int) {
 		left := line(
 			seg{contPre, pal.Struct},
 			seg{"⤷ ", pal.Settled},
 			seg{activity, actStyle},
 		)
-		if a.Verified && verified {
-			left = append(left, seg{"  ✓ verified", pal.Ok})
+		if verified {
+			if text, st := verifyMarker(a, pal); text != "" {
+				left = append(left, seg{"  " + text, st})
+			}
 		}
 		right := line(seg{pips(a.Station, done), pal.Deep})
 		if label {
@@ -597,14 +681,13 @@ func agentBlock(w state.World, v *UIState, a state.Agent, last, expanded bool, r
 				right = append(right, seg{"  " + tok, pal.Settled})
 			}
 		}
-		over := segsWidth(left) + segsWidth(right) + 1 - width
-		return composeLR(left, right, width), over
+		return composeLR(left, right, width), overflow(left, right, width)
 	}
-	act, over := actLine(wide, wide)
-	if over > 0 && wide {
-		act, over = actLine(true, false) // drop the label first (§3.1)
+	act, over := actLine(true, wide)
+	if over > 0 {
+		act, over = actLine(true, false) // the station label first (§13.3 Q3)
 		if over > 0 {
-			act, _ = actLine(false, false) // then the verified marker
+			act, _ = actLine(false, false) // the verify marker last
 		}
 	}
 	b.lines = append(b.lines, act)
@@ -655,6 +738,18 @@ func agentBlock(w state.World, v *UIState, a state.Agent, last, expanded bool, r
 	return b
 }
 
+// overflow reports how many columns a left/right pair is over width, counting
+// the gap composeLR inserts between them (and only when there is a right side
+// to separate). Positive means the degradation ladder has to give something up;
+// zero or less means the line fits as built.
+func overflow(left, right []seg, width int) int {
+	gap := 0
+	if segsWidth(right) > 0 {
+		gap = 1
+	}
+	return segsWidth(left) + segsWidth(right) + gap - width
+}
+
 // rowGlyph maps status to the §2.3 dot (⚑ replaces the dot on a needs-you
 // row, §3.10.2a) and the name weight.
 func rowGlyph(a state.Agent, pal Palette) (dot string, dotStyle, nameStyle Style) {
@@ -674,12 +769,20 @@ func rowGlyph(a state.Agent, pal Palette) (dot string, dotStyle, nameStyle Style
 	}
 }
 
-// rowTail is the §3.3 collapsed tail: decay, queued, teammate, pin-overflow.
+// rowTail is the §3.3 collapsed tail: returned, queued, teammate,
+// pin-overflow. "returned" is the word for a subagent at every age (§13.3 Q4);
+// only main merges, and §3.12's `merged · <mm:ss>` is withdrawn.
 func rowTail(a state.Agent, now time.Time, pinnedNoRoom bool) string {
 	switch {
 	case pinnedNoRoom:
 		return copyPinnedNoRoom
-	case a.Decayed:
+	case a.Status == state.StatusDone:
+		// The right column shows nothing for a settled row (§13.3 Q2), so the
+		// tail carries how long ago it landed — for the whole time it is on the
+		// tree, not just after it decays.
+		if a.DoneAt.IsZero() {
+			return "returned"
+		}
 		return "returned · " + formatClock(now.Sub(a.DoneAt))
 	case a.Status == state.StatusQueued:
 		return copyQueuedTail
@@ -689,19 +792,46 @@ func rowTail(a state.Agent, now time.Time, pinnedNoRoom bool) string {
 	return ""
 }
 
-// rowRight renders the §2.6a right-hand side: open call → ◐ in <Tool> + time
-// in call; otherwise the activity gauge (wide) + since (or the t burn rate).
-// runMax is the busiest live agent's level, the shared denominator that makes
-// one row's bar mean the same as another's (see gauge.go).
-func rowRight(a state.Agent, v *UIState, wide bool, runMax int, now time.Time, pal Palette) []seg {
-	if a.Teammate || a.Status == state.StatusQueued || a.Decayed {
-		return nil // no clock, no gauge (§3.15, §3.5)
+// verifyMarker is the §13.3 Q6 inferred marker, split on the exit code: a zero
+// exit reads "✓ verified", a non-zero one "✖ verify failed", and a check still
+// running says nothing at all (state.VerifyNone) because there is no outcome to
+// report yet. It lives on the activity line and never on the pips — a station
+// means "this is a fact" and an inference may not sit among them.
+func verifyMarker(a state.Agent, pal Palette) (string, Style) {
+	switch a.Verify {
+	case state.VerifyOK:
+		return "✓ verified", pal.Ok
+	case state.VerifyFailed:
+		return "✖ verify failed", pal.NeedsYou
+	}
+	return "", pal.Settled
+}
+
+// settledRow reports the rows that show neither a gauge nor a number (§13.3
+// Q2): a returned agent, a queued one, a teammate. Nothing about them is
+// changing, so a moving number would be noise and a bar would be a memory.
+func settledRow(a state.Agent) bool {
+	return a.Teammate || a.Decayed ||
+		a.Status == state.StatusQueued || a.Status == state.StatusDone
+}
+
+// rowRight renders the right-hand side under the §13.3 Q2 rule:
+//
+//	settled          nothing at all
+//	in a call ≥2s    ◐ in <Tool> + how long the call has been open
+//	stuck | ask      the gauge + how long it has been SILENT
+//	otherwise        the gauge + the burn rate (or the clock, behind `t`)
+//
+// The stuck/ask override is not toggleable, and `t` cannot reach it: silence is
+// the entire point of the number there. runMax is the busiest live agent's
+// level, the shared denominator that makes one row's bar mean the same as
+// another's (gauge.go); cells is the gauge width the caller's fit ladder settled
+// on.
+func rowRight(a state.Agent, v *UIState, cells, runMax int, now time.Time, pal Palette) []seg {
+	if settledRow(a) {
+		return nil // no clock, no gauge (§3.15, §3.5, §13.3 Q2)
 	}
 	warn := needsYou(a)
-	sinceStyle := pal.Deep
-	if warn {
-		sinceStyle = pal.NeedsYou
-	}
 	if showOpenCall(a, now) {
 		st := pal.Live
 		if warn {
@@ -712,25 +842,44 @@ func rowRight(a state.Agent, v *UIState, wide bool, runMax int, now time.Time, p
 			seg{" " + formatSince(now.Sub(a.OpenCall.Since)), st},
 		)
 	}
-	num := formatSince(now.Sub(a.LastEventAt))
-	if v.RightCol == "rate" && a.Status != state.StatusDone {
-		num = formatRate(tokensLastMinute(a.SparkBuckets))
-		sinceStyle = pal.Deep
+	num, numStyle := rowNumber(a, v, now, pal)
+	gaugeStyle := pal.Live
+	if warn {
+		gaugeStyle = pal.NeedsYou
 	}
-	var out []seg
-	if wide {
-		switch {
-		case a.Status == state.StatusStuck:
-			out = append(out, seg{flatline, pal.NeedsYou})
-		case a.Status == state.StatusDone:
-			out = append(out, seg{flatline, pal.Settled})
-		default:
-			out = append(out, seg{gaugeFor(a, v.SparkMetric, runMax, now), pal.Live})
-		}
-	}
-	out = append(out, seg{" " + num, sinceStyle})
-	return out
+	return line(
+		seg{gaugeFor(a, v.SparkMetric, runMax, cells, now), gaugeStyle},
+		seg{" " + num, numStyle},
+	)
 }
+
+// rowNumber picks the number on the right of a live row (§13.3 Q2).
+//
+// A stalled row never shows `0.0k/s`: it is technically true and completely
+// mute, and the thing worth knowing about a row that has stopped is how long it
+// has been stopped. That covers ask and stuck by status, unknown (silent past
+// unknown_after, which is stalled by any honest reading), and any row whose
+// burn rate has decayed to nothing — a zero rate answers the question the rate
+// column exists to answer with silence.
+func rowNumber(a state.Agent, v *UIState, now time.Time, pal Palette) (string, Style) {
+	silence := formatSince(now.Sub(a.LastEventAt))
+	if needsYou(a) {
+		return silence, pal.NeedsYou
+	}
+	if a.Status == state.StatusUnknown || v.RightCol != "rate" {
+		return silence, pal.Deep
+	}
+	// The test is what the column would SAY, not whether the underlying number
+	// is exactly zero: a trickle that rounds to 0.0k/s is just as mute as no
+	// tokens at all, and §13.4 forbids that reading on a row that has stopped.
+	if rate := formatRate(tokensLastMinute(a.SparkBuckets)); rate != mutedRate {
+		return rate, pal.Deep
+	}
+	return silence, pal.Deep
+}
+
+// mutedRate is the one rendering of the burn rate that answers nothing.
+const mutedRate = "0.0k/s"
 
 // activityText is the ⤷ line (§3.3): honest state for ask/stuck, the observed
 // activity otherwise.

@@ -43,6 +43,30 @@ func TestActivityGauge(t *testing.T) {
 	}
 }
 
+// §13.3 Q3 step 3: the gauge narrows, it never disappears. Five cells become
+// three; a caller asking for nothing still gets one.
+func TestGaugeNarrowsButNeverVanishes(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 3, 0, time.UTC)
+	for _, c := range []struct{ cells, want int }{
+		{gaugeCells, gaugeCells}, {gaugeCellsNarrow, gaugeCellsNarrow},
+		{1, 1}, {0, 1}, {-4, 1},
+	} {
+		got := activityGaugeN(1, true, c.cells, now)
+		if n := len([]rune(got)) - 1; n != c.want { // less the motion glyph
+			t.Errorf("cells=%d: bar is %d wide (%q), want %d", c.cells, n, got, c.want)
+		}
+		if strings.Count(got, gaugeFilled) != c.want {
+			t.Errorf("cells=%d: the busiest agent must fill the bar: %q", c.cells, got)
+		}
+	}
+	// A narrowed bar still ranks: half the work is still visibly less.
+	half := activityGaugeN(0.34, true, gaugeCellsNarrow, now)
+	full := activityGaugeN(1, true, gaugeCellsNarrow, now)
+	if strings.Count(half, gaugeFilled) >= strings.Count(full, gaugeFilled) {
+		t.Errorf("narrow gauge stopped ranking: %q vs %q", half, full)
+	}
+}
+
 // The whole point of a shared scale: an agent doing twice the work of another
 // must draw a longer bar. Under the old per-agent scaling both drew full.
 func TestGaugeIsComparableAcrossAgents(t *testing.T) {
@@ -56,8 +80,8 @@ func TestGaugeIsComparableAcrossAgents(t *testing.T) {
 	if runMax != 1000 {
 		t.Fatalf("runMax = %d, want the busiest agent's level", runMax)
 	}
-	b := strings.Count(gaugeFor(busy, "tokens", runMax, now), gaugeFilled)
-	q := strings.Count(gaugeFor(quiet, "tokens", runMax, now), gaugeFilled)
+	b := strings.Count(gaugeFor(busy, "tokens", runMax, gaugeCells, now), gaugeFilled)
+	q := strings.Count(gaugeFor(quiet, "tokens", runMax, gaugeCells, now), gaugeFilled)
 	if b <= q {
 		t.Errorf("busier agent must draw a longer bar: busy=%d quiet=%d", b, q)
 	}
@@ -84,11 +108,11 @@ func TestGaugeStopsMovingWhenTheAgentDoes(t *testing.T) {
 	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
 	a := state.Agent{ID: "a", Status: state.StatusRun, LastEventAt: now.Add(-gaugeIdle - time.Second)}
 	a.SparkBuckets[59] = state.SparkBucket{Tokens: 10}
-	if got := gaugeFor(a, "tokens", 10, now); !strings.HasPrefix(got, " ") {
+	if got := gaugeFor(a, "tokens", 10, gaugeCells, now); !strings.HasPrefix(got, " ") {
 		t.Errorf("a silent agent must not spin: %q", got)
 	}
 	a.LastEventAt = now
-	if got := gaugeFor(a, "tokens", 10, now); strings.HasPrefix(got, " ") {
+	if got := gaugeFor(a, "tokens", 10, gaugeCells, now); strings.HasPrefix(got, " ") {
 		t.Errorf("a producing agent must spin: %q", got)
 	}
 }

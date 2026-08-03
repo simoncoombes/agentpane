@@ -8,8 +8,9 @@ import (
 )
 
 // TestQuietPhantomAgentsSuppressed: Claude Code emits SubagentStart/Stop for
-// entities that run nothing and write no transcript. They must not become
-// rows, and they must not vanish either — the snapshot counts them.
+// entities that run nothing and write no transcript. Once it is clear they are
+// empty they must not hold rows, and they must not vanish either — the snapshot
+// counts them.
 func TestQuietPhantomAgentsSuppressed(t *testing.T) {
 	f := newFix()
 	for i := 0; i < 40; i++ {
@@ -17,6 +18,12 @@ func TestQuietPhantomAgentsSuppressed(t *testing.T) {
 		f.apply(time.Duration(i)*time.Millisecond, event.AgentStarted, id, withType("general-purpose"))
 		f.apply(time.Duration(i)*time.Millisecond, event.AgentReturned, id, withType("general-purpose"))
 	}
+	// §13.1: not inside stuck_after of the spawn. At this instant nothing
+	// distinguishes these from forty agents that are about to do real work.
+	if w := f.m.Snapshot(); len(w.Quiet) != 0 {
+		t.Fatalf("suppressed %d agents in their first breath, want 0", len(w.Quiet))
+	}
+	f.tick(DefaultConfig().StuckAfter + time.Second)
 	w := f.m.Snapshot()
 	if len(w.Agents) != 0 {
 		t.Fatalf("phantoms rendered %d rows, want 0", len(w.Agents))
@@ -32,11 +39,53 @@ func TestQuietPhantomAgentsSuppressed(t *testing.T) {
 			t.Errorf("quiet agent %s lost its agent_type: %q", q.ID, q.Type)
 		}
 	}
-	// Long after the grace, a settled phantom stays suppressed: it will never
-	// do anything.
-	f.tick(time.Minute)
+	// Later still: a settled phantom stays suppressed, and no derived alert was
+	// ever raised about one (a StallDetected would put it in the band).
+	out := f.tick(10 * time.Minute)
+	if hasKind(out, event.StallDetected) {
+		t.Error("a phantom stalled: an empty agent must never reach the band")
+	}
 	if w := f.m.Snapshot(); len(w.Agents) != 0 {
-		t.Fatalf("a settled phantom earned a row after the grace: %d rows", len(w.Agents))
+		t.Fatalf("a settled phantom earned a row later on: %d rows", len(w.Agents))
+	}
+}
+
+// TestQuietFirstBreathIsNeverSuppressed is §13.1(c) on its own: an agent that
+// has just been announced is indistinguishable from one that is about to work,
+// so it keeps its row until silence past stuck_after makes the absence of
+// activity evidence rather than timing.
+func TestQuietFirstBreathIsNeverSuppressed(t *testing.T) {
+	stuck := DefaultConfig().StuckAfter
+	f := newFix()
+	f.apply(0, event.AgentStarted, "a1", withType("Explore"))
+
+	for _, at := range []time.Duration{0, time.Second, stuck / 2, stuck - time.Second} {
+		f.tick(at)
+		w := f.m.Snapshot()
+		if agentByID(w, "a1") == nil {
+			t.Fatalf("at %s the agent was hidden inside its first breath (quiet: %+v)", at, w.Quiet)
+		}
+		if len(w.Quiet) != 0 {
+			t.Fatalf("at %s it was counted as suppressed: %+v", at, w.Quiet)
+		}
+	}
+	// The threshold arrives with nothing recorded: now it is a phantom.
+	f.tick(stuck)
+	w := f.m.Snapshot()
+	if len(w.Agents) != 0 {
+		t.Fatalf("still rendering an agent that recorded nothing past stuck_after: %+v", w.Agents)
+	}
+	if q := quietByID(w, "a1"); q == nil {
+		t.Fatalf("it was dropped instead of counted: %+v", w.Quiet)
+	}
+
+	// One real tool call inside the first breath earns the row for good.
+	g := newFix()
+	g.apply(0, event.AgentStarted, "b1", withType("Explore"))
+	g.apply(time.Second, event.ToolStart, "b1", withTool("Bash", "rg acl"))
+	g.tick(10 * time.Minute)
+	if w := g.m.Snapshot(); agentByID(w, "b1") == nil || len(w.Quiet) != 0 {
+		t.Fatalf("an agent that did something lost its row: agents=%+v quiet=%+v", w.Agents, w.Quiet)
 	}
 }
 
@@ -95,12 +144,15 @@ func TestQuietEarnsARow(t *testing.T) {
 
 // TestQuietLongLivedPhantomNeverRenders: being alive is not work. A long-lived
 // phantom (session 6d53f05d had four, each ~90s, no tool, no tokens, no
-// transcript) must never take a row — the old grace-period rule gave it one and
-// then DELETED that row the moment it settled.
+// transcript) holds a row only for its first breath (§13.1) and never earns
+// one — outliving a timer is not evidence, so the row does not come back and
+// nothing is derived about it.
 func TestQuietLongLivedPhantomNeverRenders(t *testing.T) {
 	f := newFix()
 	f.apply(0, event.AgentStarted, "a1", withType("Explore"))
-	for _, at := range []time.Duration{0, 3 * time.Second, 30 * time.Second, 90 * time.Second} {
+	for _, at := range []time.Duration{
+		DefaultConfig().StuckAfter, 60 * time.Second, 90 * time.Second,
+	} {
 		f.tick(at)
 		w := f.m.Snapshot()
 		if len(w.Agents) != 0 {
@@ -263,6 +315,7 @@ func TestFinalMessageAloneIsQuiet(t *testing.T) {
 	f := newFix()
 	f.apply(0, event.AgentStarted, "ghost")
 	f.apply(0, event.AgentReturned, "ghost", withDetail("found it in acl.py"))
+	f.tick(DefaultConfig().StuckAfter + time.Second) // past the §13.1 first breath
 	w := f.m.Snapshot()
 	if len(w.Agents) != 0 {
 		t.Fatalf("a message-only agent must not take a row, got %d", len(w.Agents))

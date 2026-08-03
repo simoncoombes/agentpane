@@ -31,12 +31,7 @@ func renderFrame(w state.World, v *UIState, cols, rows int, now time.Time, pal P
 	if cols < 40 {
 		return finishMeta(renderTiny(w, v, cols, rows, now, pal), cols, rows)
 	}
-	width := cols
-	if v.WidthMode == "narrow" && width > 44 {
-		width = 44
-	} else if width > 64 {
-		width = 64
-	}
+	width := frameWidth(v, cols)
 	if idlePhase(w) {
 		return finishMeta(renderIdleFrame(w, v, width, rows, now, pal), width, rows)
 	}
@@ -44,6 +39,126 @@ func renderFrame(w state.World, v *UIState, cols, rows int, now time.Time, pal P
 		return finishMeta(renderCondensed(w, v, width, rows, now, pal), width, rows)
 	}
 	return finishMeta(renderActive(w, v, width, rows, now, pal), width, rows)
+}
+
+// narrationPlan splits the pane's leftover rows between the tree and the
+// narration, and returns the voice mode actually drawn plus the tree rendered
+// inside the remainder.
+//
+// **The rule at small geometries: the tree wins, and it wins on breadth.**
+//
+// Narration is reserved at its fixed height only while the tree still draws
+// every agent's row AND every agent's activity line. Both signals come from
+// renderTree itself, so the rule cannot drift from what the tree actually did:
+// scrollInfo is set exactly when a row had to be hidden, and breadth is set
+// exactly when the breadth pass finished. The ladder is then: try the requested
+// mode; while either signal says the tree lost something, drop one region
+// (commentary first, then the standup) and try again. Regions are dropped WHOLE
+// and never shrunk, because a narration region whose height depends on the pane
+// is precisely what §13.4 forbids.
+//
+// What narration IS allowed to cost is tool-call history, and that is not a
+// concession — it is the mock's own behaviour, whose call budget shrinks 14 → 8
+// → 4 as the voice grows. History is discretionary (§3.17 already rations it
+// 4→2→0 under pressure) and it is the one part of a row whose absence costs you
+// nothing you cannot get back by selecting the row. A missing agent row, or a
+// row that will not say what its agent is doing, is information you cannot
+// recover at all, and no sentence is worth it.
+//
+// On a pane where the agents already do not fit, the tree is losing information
+// on its own and narration stays off rather than making that worse. The absence
+// is stated, not silent: the `n` toast says "no room" (narrationFits) and the
+// footer keeps advertising the key, so the mode returns the moment the pane
+// grows.
+//
+// Everything below 40 columns (renderTiny), under 12 rows (renderCondensed) and
+// the whole idle screen never reach this function: those geometries exist to
+// carry one alert, and prose would displace it.
+// minTreeRows is the floor narration must leave the tree: main's own two rows
+// plus one agent. Below that the pane is not showing a tree at all, so the
+// voice degrades instead (§13.2: the tree wins when there is not room for both).
+const minTreeRows = 3
+
+func narrationPlan(w state.World, v *UIState, width, leftover int, now time.Time, pal Palette) (VoiceMode, treeResult) {
+	mode := v.voice()
+	// Every attempt starts from the same viewport. renderTree writes
+	// UIState.ScrollTop as a side effect of windowing (scrollWindow), so a
+	// REJECTED candidate — which is windowed by definition — would otherwise
+	// leave its scroll position behind for the candidate that is actually drawn.
+	top := v.ScrollTop
+	for {
+		v.ScrollTop = top
+		avail := leftover - narrationHeight(mode)
+		if avail < 3 {
+			avail = 3
+		}
+		tree := renderTree(w, v, width, avail, now, pal)
+		// The tree's own signals are not sufficient on their own. `avail` is
+		// clamped to a floor of 3, so a tree with few rows reports "not
+		// scrolling, full breadth" however little room it was given — and a
+		// main-only run (every session before its first Task) has almost no
+		// rows. Accepting on those signals alone let a 20-row narration onto an
+		// 8-row leftover: the pad went negative and the footer, carrying the
+		// toasts and key hints, was clipped off the frame.
+		//
+		// The guard is only that narration must leave the tree its floor. It is
+		// deliberately not "narration + every tree row must fit": the tree is
+		// allowed to window inside its share, and requiring the whole tree
+		// would switch the voice off on any pane with a few agents.
+		fits := narrationHeight(mode) <= leftover-minTreeRows
+		if mode == VoiceOff || (fits && tree.scrollInfo == "" && tree.breadth) {
+			return mode, tree
+		}
+		mode = mode.degraded()
+	}
+}
+
+// narrationFits reports whether the requested voice mode is the one being drawn.
+// The `n` toast uses it to say "no room" instead of claiming a mode that is not
+// on screen (§1.5: degrade honestly, never silently).
+func narrationFits(w state.World, v *UIState, cols, rows int, now time.Time, pal Palette) bool {
+	if v.voice() == VoiceOff {
+		return true
+	}
+	top := v.ScrollTop
+	drawn, _ := narrationPlan(w, v, frameWidth(v, cols), narrationLeftover(w, v, cols, rows, now, pal), now, pal)
+	v.ScrollTop = top
+	return drawn == v.voice()
+}
+
+// narrationLeftover recomputes the rows the tree and the narration share. It
+// mirrors renderActive's own arithmetic; keeping it in one small function is what
+// stops the two from drifting.
+func narrationLeftover(w state.World, v *UIState, cols, rows int, now time.Time, pal Palette) int {
+	width := frameWidth(v, cols)
+	fixed := 2 + 2
+	if entries := bandEntries(w, v, now); len(entries) > 0 || v.Digest != nil {
+		bandLines := renderBand(entries, v, width, v.SelID == selBand, pal)
+		if maxBand := rows - 12; len(bandLines) > maxBand && maxBand >= 3 {
+			bandLines = bandLines[:maxBand]
+		}
+		fixed += len(bandLines) + 1
+	}
+	if len(w.Contentions) > 0 {
+		fixed += len(renderContention(w, v, width, pal))
+	}
+	if v.InspectorOpen {
+		fixed += len(renderInspector(w, v, width, now, pal))
+	}
+	return rows - fixed
+}
+
+// frameWidth is the rendered width for a pane of cols columns: the §3.1 wide-64
+// or narrow-44 budget, never the raw terminal width.
+func frameWidth(v *UIState, cols int) int {
+	width := cols
+	if v.WidthMode == "narrow" && width > 44 {
+		return 44
+	}
+	if width > 64 {
+		return 64
+	}
+	return width
 }
 
 // quietLineDrawn reports whether the current geometry paints the §1.5
@@ -121,11 +236,10 @@ func renderActive(w state.World, v *UIState, width, rows int, now time.Time, pal
 	if len(bandLines) > 0 {
 		fixed += len(bandLines) + 1
 	}
-	treeAvail := rows - fixed
-	if treeAvail < 3 {
-		treeAvail = 3
-	}
-	tree := renderTree(w, v, width, treeAvail, now, pal)
+	// The tree and the narration share what is left. narrationPlan decides the
+	// split, and the tree is rendered inside it — see the function for the rule.
+	voice, tree := narrationPlan(w, v, width, rows-fixed, now, pal)
+	narrLines := renderNarration(w, v, voice, width, now, pal)
 
 	for _, ln := range bandLines {
 		f.add(selBand, ln)
@@ -138,11 +252,14 @@ func renderActive(w state.World, v *UIState, width, rows int, now time.Time, pal
 	}
 	f.addAll("", contLines)
 
-	// Pad so the inspector and footer sit at the bottom.
-	pad := rows - len(f.lines) - len(inspLines) - 2
+	// Pad so the narration, the inspector and the footer sit at the bottom.
+	pad := rows - len(f.lines) - len(narrLines) - len(inspLines) - 2
 	for i := 0; i < pad; i++ {
 		f.add("", nil)
 	}
+	// Narration lines carry no row id: they are not selectable and a click on
+	// prose must not move the tree's selection (§5.1 lists no such target).
+	f.addAll("", narrLines)
 	f.addAll(v.SelID, inspLines)
 	f.add("", rule(width, pal))
 	f.add("", footerLine(w, v, width, now, pal, tree.scrollInfo))
@@ -213,7 +330,19 @@ func footerLine(w state.World, v *UIState, width int, now time.Time, pal Palette
 	case v.DemoPaused:
 		left = line(seg{"⏸ demo paused", pal.NeedsYou})
 	default:
-		left = line(seg{"j/k ␣ ⏎ f o y · t tokens", pal.Deep})
+		// `n voice` is advertised even when narrationPlan is withholding the
+		// region: the key is what makes the absence recoverable, and hiding the
+		// hint would make a pane with no room look like a pane with no feature.
+		//
+		// Two forms, because the full one plus the right-hand mode label does not
+		// fit 44 columns and a truncated key hint ("t to…") is worse than a
+		// shorter list of keys. The narrow form keeps the three keys the §3.1
+		// diagram leads with plus the two toggles; ␣/f/o/y stay in `?`.
+		hint := "j/k ␣ ⏎ f o y · n voice · t tokens"
+		if width < 56 {
+			hint = "j/k ⏎ · n voice · t tokens"
+		}
+		left = line(seg{hint, pal.Deep})
 	}
 
 	var right []seg

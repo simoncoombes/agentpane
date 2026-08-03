@@ -16,6 +16,14 @@ const inspectorMax = 14
 // Returned lines include the separating top rule. Closing it is view-only —
 // nothing here touches the agent.
 func renderInspector(w state.World, v *UIState, width int, now time.Time, pal Palette) [][]seg {
+	// The suppressed-agents line is not an agent: it has no description, no
+	// stations and no log, and the question asked of it is a different question
+	// (§13.3 Q8). It gets its own view rather than an agent view full of
+	// dashes.
+	if v.SelID == selQuiet {
+		return renderQuietInspector(quietRows(w), v.InspectorScroll, width, pal)
+	}
+
 	var lines [][]seg
 	lines = append(lines, rule(width, pal))
 
@@ -50,7 +58,24 @@ func renderInspector(w state.World, v *UIState, width int, now time.Time, pal Pa
 		lines = append(lines, truncSegs(line(seg{dl, pal.Primary}), width))
 	}
 
+	// §13.1(a): when the exact description arrived after the row's name had
+	// already been published — in a notification or in the standup — the row
+	// keeps the published name and the truth is recorded HERE and nowhere else.
+	// This is the only place in the pane allowed to show it: printing it on the
+	// row would perform the rename the freeze exists to prevent.
+	if v.Slugs != nil && v.SelID != "" {
+		if late := v.Slugs.LateName(v.SelID); late != "" {
+			lines = append(lines, truncSegs(line(
+				seg{"named late · ", pal.Deep}, seg{late, pal.Settled}), width))
+		}
+	}
+
 	lines = append(lines, inspectorStationRow(w, v, width, pal))
+	// §13.3 Q1: the activity history is here, on the row's own cross-agent
+	// scale, and the row gave up nothing for it.
+	if hist := inspectorHistoryRow(w, v, width, now, pal); hist != nil {
+		lines = append(lines, hist)
+	}
 
 	// Fixed rows so far + cursor + footer bound the log window.
 	a, isAgent := agentByID(w, v.SelID)
@@ -179,8 +204,16 @@ func inspectorStationRow(w state.World, v *UIState, width int, pal Palette) []se
 		seg{pips(a.Station, done), pal.Deep},
 		seg{"  " + stationLabel(a.Station, done), pal.Deep},
 	)
-	if a.Verified {
+	// The split marker (§13.3 Q6), not the yes/no one: a check that exited
+	// non-zero is the more useful of the two outcomes and the boolean threw it
+	// away. Still labelled "(inferred)" here, because a command's description
+	// naming a test is a claim about intent — the exit code sharpens the marker,
+	// it does not turn it into a station.
+	switch a.Verify {
+	case state.VerifyOK:
 		out = composeLR(out, line(seg{"✓ verified (inferred)", pal.Ok}), width)
+	case state.VerifyFailed:
+		out = composeLR(out, line(seg{"✖ verify failed (inferred)", pal.NeedsYou}), width)
 	}
 	return out
 }

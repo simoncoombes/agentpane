@@ -30,6 +30,12 @@ import (
 // the numbers (tokens, rate) remain exact on the row.
 const (
 	gaugeCells = 5
+	// gaugeCellsNarrow is the one concession the gauge makes to a narrow row
+	// (§13.3 Q3 step 3). It never narrows to zero: with the sparkline gone the
+	// gauge is the only comparative element on the row, so dropping it would
+	// leave the tree with nothing that answers "which of these is doing the
+	// most" — which was the whole reason for replacing the sparkline.
+	gaugeCellsNarrow = 3
 
 	// gaugeFilled/gaugeEmpty are §3.11 glyphs. ▇ reads as a solid block at
 	// this size while leaving ▁..▆ free, and · is the established "nothing
@@ -43,16 +49,28 @@ const (
 	gaugeIdle = 3 * time.Second
 )
 
-// activityGauge renders one agent's gauge: an optional motion glyph followed
-// by gaugeCells of bar. share is the agent's activity as a fraction of the
-// busiest agent in the run (0..1); moving reports whether it has produced
-// anything recently.
+// activityGauge renders one agent's gauge at the full row width. Callers with
+// a narrow row use activityGaugeN; this signature is the one the inspector's
+// history shares its rounding with, so it stays the plain form.
+func activityGauge(share float64, moving bool, now time.Time) string {
+	return activityGaugeN(share, moving, gaugeCells, now)
+}
+
+// activityGaugeN renders one agent's gauge: an optional motion glyph followed
+// by cells of bar. share is the agent's activity as a fraction of the busiest
+// agent in the run (0..1); moving reports whether it has produced anything
+// recently. cells is gaugeCells normally and gaugeCellsNarrow on a row that
+// could not fit the full bar; below one cell it is clamped, never removed —
+// the gauge never degrades to nothing (§13.3 Q3).
 //
 // A moving agent always shows at least one filled cell — it is doing
 // something, and rounding that to nothing would be a lie in the direction that
-// matters (C8). A still agent with no work shows the empty bar, which is the
-// flatline's meaning: nothing is running.
-func activityGauge(share float64, moving bool, now time.Time) string {
+// matters (C8). A still agent with no work shows the empty bar: nothing is
+// running.
+func activityGaugeN(share float64, moving bool, cells int, now time.Time) string {
+	if cells < 1 {
+		cells = 1
+	}
 	head := " "
 	if moving {
 		head = spinner(now)
@@ -63,15 +81,15 @@ func activityGauge(share float64, moving bool, now time.Time) string {
 	if share > 1 {
 		share = 1
 	}
-	filled := int(share*float64(gaugeCells) + 0.5)
+	filled := int(share*float64(cells) + 0.5)
 	if filled == 0 && moving {
 		filled = 1
 	}
-	if filled > gaugeCells {
-		filled = gaugeCells
+	if filled > cells {
+		filled = cells
 	}
 	return head + strings.Repeat(gaugeFilled, filled) +
-		strings.Repeat(gaugeEmpty, gaugeCells-filled)
+		strings.Repeat(gaugeEmpty, cells-filled)
 }
 
 // agentActivity is one agent's current work level in the units the row is
@@ -99,7 +117,7 @@ func runActivityMax(agents []state.Agent, metric string) int {
 }
 
 // gaugeFor renders the gauge for one agent against the run-wide scale.
-func gaugeFor(a state.Agent, metric string, runMax int, now time.Time) string {
+func gaugeFor(a state.Agent, metric string, runMax, cells int, now time.Time) string {
 	level := agentActivity(a, metric)
 	moving := !a.LastEventAt.IsZero() && now.Sub(a.LastEventAt) <= gaugeIdle &&
 		a.Status != state.StatusDone
@@ -107,5 +125,5 @@ func gaugeFor(a state.Agent, metric string, runMax int, now time.Time) string {
 	if runMax > 0 {
 		share = float64(level) / float64(runMax)
 	}
-	return activityGauge(share, moving, now)
+	return activityGaugeN(share, moving, cells, now)
 }

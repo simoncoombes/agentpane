@@ -185,7 +185,12 @@ type Agent struct {
 	// 0 spawn, 1 first tool, 2 first edit, 3 return.
 	Station int
 	Retries int // inferred (§2.3): dim ↺n, never a status
-	// Verified is the inferred test/build/lint marker (§2.2), never a pip.
+	// Verify is the inferred test/build/lint marker (§2.2), split on the exit
+	// code (§13.3 Q6): VerifyOK on a zero exit, VerifyFailed on a non-zero one,
+	// VerifyNone while nothing has completed. Never a pip — stations mean
+	// "observed fact" and an inference may not sit among them.
+	Verify VerifyState
+	// Verified answers the yes/no half of the same question: the check passed.
 	Verified bool
 	// Decayed marks a done agent past decay_after (§3.5): display
 	// collapse only, not a status.
@@ -201,8 +206,12 @@ type Agent struct {
 	CurrentTool   string
 	CurrentTarget string
 	ActivityLine  string
-	OpenFile      string // last Read/Edit target
-	LastError     string
+	// RawActivityLine is ActivityLine before ingest flattening, set only when
+	// the two differ (§13.1: `y` yanks the original bytes). Read it through
+	// ActivityRaw.
+	RawActivityLine string
+	OpenFile        string // last Read/Edit target
+	LastError       string
 	// LastMessage is the agent's final platform text; the UI may colour it
 	// but never adds a verdict (§2.3).
 	LastMessage string
@@ -235,20 +244,74 @@ type QuietAgent struct {
 	Status Status
 }
 
+// VerifyState is the inferred verification marker (§13.3 Q6). Intent is not
+// evidence: only a check that ran to a known exit code moves it off None.
+type VerifyState uint8
+
+const (
+	// VerifyNone: no verification has completed. A verify command still open
+	// stays here — the row says nothing until there is an outcome.
+	VerifyNone VerifyState = iota
+	VerifyOK
+	VerifyFailed
+)
+
+func (v VerifyState) String() string {
+	switch v {
+	case VerifyOK:
+		return "verified"
+	case VerifyFailed:
+		return "verify failed"
+	default:
+		return "none"
+	}
+}
+
+// ActivityRaw is the activity line as the tool wrote it: the pre-flatten bytes
+// when they differ, the rendered line otherwise. Yanks use this.
+func (a Agent) ActivityRaw() string {
+	if a.RawActivityLine != "" {
+		return a.RawActivityLine
+	}
+	return a.ActivityLine
+}
+
 // OpenCall is the §2.6a open-call state.
 type OpenCall struct {
-	Tool   string
-	Target string
-	Since  time.Time
+	Tool string
+	// Target is flattened for display; RawTarget holds the exact command when
+	// the two differ (§13.1).
+	Target    string
+	RawTarget string
+	Since     time.Time
+}
+
+// TargetRaw is the exact command this call is running.
+func (o OpenCall) TargetRaw() string {
+	if o.RawTarget != "" {
+		return o.RawTarget
+	}
+	return o.Target
 }
 
 // Call is one glyph-ready call-history entry (§3.3 lines 4-7).
 type Call struct {
-	Tool   string
-	Target string
-	Err    bool
-	Meta   string // e.g. "+29 −4", "err", "exit 2"
-	At     time.Time
+	Tool string
+	// Target is flattened for display; RawTarget holds the exact command when
+	// the two differ (§13.1). `y` yanks TargetRaw, never Target.
+	Target    string
+	RawTarget string
+	Err       bool
+	Meta      string // e.g. "+29 −4", "err", "exit 2"
+	At        time.Time
+}
+
+// TargetRaw is the exact text this call ran.
+func (c Call) TargetRaw() string {
+	if c.RawTarget != "" {
+		return c.RawTarget
+	}
+	return c.Target
 }
 
 // SparkBucket holds both sparkline metrics for one second (§3.4).

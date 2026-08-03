@@ -8,6 +8,7 @@ import (
 
 	"github.com/simoncoombes/agentpane/internal/config"
 	"github.com/simoncoombes/agentpane/internal/event"
+	"github.com/simoncoombes/agentpane/internal/narrate"
 	"github.com/simoncoombes/agentpane/internal/runstore"
 	"github.com/simoncoombes/agentpane/internal/slug"
 	"github.com/simoncoombes/agentpane/internal/state"
@@ -359,6 +360,7 @@ func (m *Model) afterMachine(derived []event.Event) {
 	m.syncConnection()
 	m.syncAsks()
 	m.syncFollow()
+	m.advanceNarration()
 	if m.world.Rev != prevRev {
 		m.writeStatefile()
 		m.dirty = true
@@ -432,6 +434,12 @@ func (m *Model) notifyCheck() {
 			m.askNotified[ask.Key] = true
 			slugName := m.v.slugByID(ask.AgentID, ask.Description)
 			m.cfg.Emitter.Notify("⚑ " + slugName + " needs you")
+			// §13.1(a): a name that has left the pane in a notification is
+			// frozen for the rest of the run. A late exact description is still
+			// recorded (slug.Table.LateName) and surfaces in the inspector, but
+			// the row keeps the name the notification used — an agent whose name
+			// changes under you reads as two agents.
+			m.v.Slugs.Publish(ask.AgentID)
 		}
 	}
 }
@@ -567,8 +575,12 @@ func (m *Model) resetForSession(sessionID string) {
 	m.v.Logs = NewEventLog()
 	m.v.Slugs = slug.New(m.cfg.Cfg.SlugMax)
 	m.v.Pins = map[string]int{}
-	m.v.SparkScale = map[string]sparkScale{}
 	m.v.PinSeq = 0
+	// The narration is per-session too: session A's commentary under session B's
+	// header would be the same leak the log and the slug table are reset for.
+	m.v.Narr = narrate.Memory{}
+	m.v.CommScroll = 0
+	m.v.StandupScroll = 0
 	m.v.ScrollTop = 0
 	m.v.SelID = event.MainAgentID
 	m.v.InspectorOpen = false

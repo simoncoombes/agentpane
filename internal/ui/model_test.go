@@ -305,9 +305,11 @@ func TestDemoPauseStep(t *testing.T) {
 	if stub.paused != 1 || !m.v.DemoPaused {
 		t.Errorf("p did not pause: %+v", stub)
 	}
-	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	// Step is `.`, not `n`: §13.2 gives `n` to the voice cycle, and the demo is
+	// where the voice matters most (it is what the mock's own `n` does).
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".")})
 	if stub.stepped != 1 {
-		t.Errorf("n did not step: %+v", stub)
+		t.Errorf(". did not step: %+v", stub)
 	}
 	frame, _ := renderFrame(m.world, m.v, 64, 20, m.clock, NewPalette(2, false))
 	if !strings.Contains(stripANSI(frame), "⏸ demo paused") {

@@ -35,6 +35,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		m.quit = true
 
+	// j/k are bound to the TREE at all times (§13.2). Narration has no
+	// selection and no cursor: it is read, not navigated, and the page keys
+	// below are the only thing that moves it. This is why the narration lines
+	// carry no row id in the frame — there is nothing there for j/k to land on.
 	case "j", "down":
 		m.moveSel(1)
 	case "k", "up":
@@ -68,10 +72,20 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		m.dirty = true
 
 	case "f":
+		// The suppressed-agents view has nothing to follow: it is a static
+		// census, not a live agent, and renderQuietInspector ignores Follow. A
+		// key that silently does nothing is worse than one that says so.
+		if m.v.SelID == selQuiet {
+			m.setToast("nothing to follow — suppressed agents have no events", true)
+			break
+		}
 		m.v.Follow = true
 		m.v.InspectorOpen = true
 		m.syncFollow()
 		m.dirty = true
+
+	case "pgup", "pgdown":
+		m.pageKey(key == "pgup")
 
 	case "o":
 		m.openFileKey()
@@ -158,6 +172,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 			m.dirty = true
 		}
 	case "n":
+		m.cycleVoice()
+
+	case ".":
+		// Demo step. It used to be `n`, which §13.2 gives to the voice — and the
+		// demo is the one place the voice matters most, since it is what the
+		// mock's own `n` does. `.` is otherwise unbound at every geometry.
 		if m.cfg.Demo != nil {
 			m.cfg.Demo.Step()
 			m.v.DemoPaused = true // Step pauses a running demo (§1.4)
@@ -165,6 +185,112 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// cycleVoice is `n`: standup + commentary → standup → off (§13.2).
+//
+// The toast names the mode that was REQUESTED and, when the pane cannot hold it,
+// says so. Silently landing on a different mode than the one the key just
+// selected is the kind of thing that makes a keymap feel broken.
+func (m *Model) cycleVoice() {
+	m.v.Voice = m.v.voice().next()
+	m.v.CommScroll = 0
+	m.v.StandupScroll = 0
+	label := "voice: " + m.v.Voice.label()
+	if m.v.Voice != VoiceOff && !narrationFits(m.world, m.v, m.cols, m.rows, m.clock, m.pal) {
+		label += " (no room — the tree keeps its rows)"
+	}
+	m.setToast(label, false)
+	m.dirty = true
+}
+
+// pageKey is ⇞/⇟. Three regions can scroll and only one of them owns the keys at
+// a time; the rule is "whatever is in the foreground":
+//
+//  1. the inspector, when it is open — it is a view the user deliberately opened,
+//     and the suppressed-agents list inside it is the one that most needs paging
+//     (§13.3 Q8);
+//  2. otherwise the commentary, which is what §13.2 assigns the keys to;
+//  3. otherwise the standup body, which is only scrollable when the commentary
+//     is hidden and it therefore owns the region on its own.
+//
+// j/k are never involved: they stay on the tree at all times.
+func (m *Model) pageKey(up bool) {
+	switch {
+	case m.v.InspectorOpen:
+		page := inspectorMax - 5
+		if page < 1 {
+			page = 1
+		}
+		if up {
+			m.v.InspectorScroll += page
+		} else {
+			m.v.InspectorScroll -= page
+			if m.v.InspectorScroll < 0 {
+				m.v.InspectorScroll = 0
+			}
+		}
+	case m.voiceDrawn() == VoiceFull:
+		total := commentaryTotalLines(m.v.Narr.Entries, frameWidth(m.v, m.cols))
+		max := total - commentaryBodyRows()
+		if max < 0 {
+			max = 0
+		}
+		if up {
+			m.v.CommScroll += commentaryPage()
+			if m.v.CommScroll > max {
+				m.v.CommScroll = max
+			}
+		} else {
+			m.v.CommScroll -= commentaryPage()
+			if m.v.CommScroll < 0 {
+				m.v.CommScroll = 0 // back at the bottom: auto-follow resumes
+			}
+		}
+	case m.voiceDrawn() == VoiceStandup:
+		st := narrateNow(m.world, m.v, m.clock)
+		total := len(standupBody(st, frameWidth(m.v, m.cols), m.pal))
+		show := standupBodyRows(VoiceStandup) - 1
+		max := total - show
+		if max < 0 {
+			max = 0
+		}
+		if up {
+			m.v.StandupScroll -= show
+			if m.v.StandupScroll < 0 {
+				m.v.StandupScroll = 0
+			}
+		} else {
+			m.v.StandupScroll += show
+			if m.v.StandupScroll > max {
+				m.v.StandupScroll = max
+			}
+		}
+	default:
+		return
+	}
+	m.dirty = true
+}
+
+// voiceDrawn is the mode actually on screen, which is what the page keys must
+// follow: paging a region the geometry withheld would move an invisible view.
+func (m *Model) voiceDrawn() VoiceMode {
+	if idlePhase(m.world) || m.cols < 40 || m.rows < 12 {
+		return VoiceOff
+	}
+	top := m.v.ScrollTop
+	mode, _ := narrationPlan(m.world, m.v, frameWidth(m.v, m.cols),
+		narrationLeftover(m.world, m.v, m.cols, m.rows, m.clock, m.pal), m.clock, m.pal)
+	m.v.ScrollTop = top
+	return mode
+}
+
+// advanceNarration folds the current world into the narrator's memory. The Model
+// calls it after every machine update; it is the only place the commentary grows.
+func (m *Model) advanceNarration() {
+	if len(m.v.advanceNarration(m.world, m.clock, frameWidth(m.v, m.cols))) > 0 {
+		m.dirty = true
+	}
 }
 
 func (m *Model) liveAgents() bool {
@@ -243,13 +369,26 @@ func (m *Model) togglePin() {
 	m.dirty = true
 }
 
-// enterKey: on the alert band, jump focus to the left pane; otherwise open
-// (or refocus) the inspector (§5.1).
+// enterKey: on the alert band, jump focus to the left pane; on the
+// suppressed-agents line, open the phantom census; otherwise open (or refocus)
+// the inspector (§5.1).
 func (m *Model) enterKey() {
 	if m.v.SelID == selBand {
 		if m.cfg.FocusLeftPane != nil {
 			m.cfg.FocusLeftPane() //nolint:errcheck // degrade silently (§5.4)
 		}
+		return
+	}
+	if m.v.SelID == selQuiet {
+		// §13.3 Q8: ⏎ on the `+n` line opens the full list with per-agent spawn
+		// and last-event times — renderInspector routes selQuiet to
+		// renderQuietInspector. Scroll starts at the bottom (the newest
+		// announcements), which is where a suppressed agent that is still alive
+		// necessarily is. Follow is cleared because there is nothing to follow.
+		m.v.InspectorOpen = true
+		m.v.InspectorScroll = 0
+		m.v.Follow = false
+		m.dirty = true
 		return
 	}
 	m.v.InspectorOpen = true
@@ -288,14 +427,18 @@ func (m *Model) yankKey() {
 		case a.LastError != "":
 			text = a.LastError
 		default:
+			// The RAW target and the raw activity line: §13.1 flattens tool text
+			// on ingest for DISPLAY, and is explicit that `y` must yank what the
+			// tool actually ran. A multi-line `python3 -c` one-liner pasted back
+			// as a single flattened line is not the command.
 			for i := len(a.CallHistory) - 1; i >= 0; i-- {
 				if a.CallHistory[i].Err {
-					text = strings.TrimSpace(a.CallHistory[i].Tool + " " + a.CallHistory[i].Target)
+					text = strings.TrimSpace(a.CallHistory[i].Tool + " " + a.CallHistory[i].TargetRaw())
 					break
 				}
 			}
 			if text == "" {
-				text = a.ActivityLine
+				text = a.ActivityRaw()
 			}
 		}
 	} else if m.v.SelID == selBand && len(m.world.Asks) > 0 {

@@ -9,7 +9,7 @@ run: rm -rf node_modules/.cache && pnpm rebuild
 no call open · silent 2m50s
 [2;90mo opens the log · y yanks the command[0m
 [90m────────────────────────────────────────────────────────────────[0m
-[1m◍[0m main[90m  Build agentpane — live TUI monitor for Claude Code…[0m [90m112k[0m
+[1m◍[0m main[90m  refactor auth[0m                                       [90m112k[0m
 [90m│ [0mholding 2 agents · waiting on you                           [2;90m5s[0m
 [90m├─╮[0m
 [7m│ ╰[0m[1;7m⚑[0m[1;7m fix-ts2345-fallout[0m[7m  ↺2[0m[7m                           [0m[1;7m ·····[0m[1;7m 52s[0m
@@ -22,15 +22,29 @@ no call open · silent 2m50s
 [90m├─╮[0m
 [90m│ ╰[0m[1m⚑[0m[1m typecheck-works…[0m                               [1m ·····[0m[1m 2m50s[0m
 [90m│    [0m[90m⤷ [0m[1mno call open · silent 2m50s[0m          [2;90m▪▪▫·[0m[2;90m first edit[0m[90m  33k[0m
+[90m│      │ [0m[32m✔[0m[90m Read tsconfig.json[0m
+[90m│      │ [0m[32m✔[0m[90m Edit packages/api/tsconfig.json[0m[2;90m  +3 −1[0m
+[90m│      │ [0m[32m✔[0m[90m Edit packages/worker/tsconfig.json[0m[2;90m  +2 −0[0m
+[90m│      │ [0m[32m✔[0m[90m Edit types/session.ts[0m[2;90m  +11 −2[0m
 [90m├─╮[0m
 [90m│ ╰[0m[32m●[0m run-auth-tests                              [32m◐ in Bash[0m[32m 3m12s[0m
 [90m│    [0m[90m⤷ [0mBash pnpm test --watch[32m  ✓ verified[0m   [2;90m▪▫··[0m[2;90m first tool[0m[90m  38k[0m
+[90m│      │ [0m[32m✔[0m[90m Read auth/session.test.ts[0m
+[90m│      │ [0m[32m✔[0m[90m Bash pnpm test --filter auth --run[0m
 [90m├─╮[0m
 [90m│ ╰[0m[32m●[0m audit-users-schema                            [32m⠼▇▇···[0m[2;90m 0.1k/s[0m
 [90m│    [0m[90m⤷ [0mGrep "createUser" src/**             [2;90m▪▪▫·[0m[2;90m first edit[0m[90m  52k[0m
+[90m│      │ [0m[32m✔[0m[90m Grep "editUser" src/**[0m
+[90m│      │ [0m[32m✔[0m[90m Edit db/users.ts[0m[2;90m  +18 −6[0m
+[90m│      │ [0m[32m✔[0m[90m Read db/indexes.ts[0m
+[90m│      │ [0m[32m✔[0m[90m Grep "createUser" src/**[0m[2;90m  +3 more[0m
 [90m├─╮[0m
 [90m│ ╰[0m[32m●[0m write-email-index                             [32m ▇▇▇▇▇[0m[2;90m 0.3k/s[0m
 [90m│    [0m[90m⤷ [0mEdit db/migrations/0042.sql          [2;90m▪▪▫·[0m[2;90m first edit[0m[90m  86k[0m
+[90m│      │ [0m[32m✔[0m[90m Write db/migrations/0042.sql[0m[2;90m  +40 −0[0m
+[90m│      │ [0m[32m✔[0m[90m Read db/indexes.ts[0m
+[90m│      │ [0m[32m✔[0m[90m Edit db/migrations/0042.sql[0m[2;90m  +30 −2[0m
+[90m│      │ [0m[32m✔[0m[90m Edit db/migrations/0042.sql[0m[2;90m  +84 −3[0m[2;90m  +2 more[0m
 [90m├─╮[0m
 [90m│ ╰[0m[90m○[0m[90m document-constr…[0m[90m  queued[0m                                   
 [90m├─╮[0m
@@ -40,5 +54,19 @@ no call open · silent 2m50s
 [90m────────────────────────────────────────────────────────────────[0m
 [1m⚠ 2 agents editing db/schema.ts[0m
 [90m  audit-users-schema + write-email-index[0m
+
+
+[90m────────────────────────────────────────────────────────────────[0m
+[1;7m⚑ NEEDS YOU[0m                                                 [2;90m5:00[0m
+[1mYou're the blocker. fix-ts2345-fallout is waiting on permission[0m
+[1mto run `rm -rf node_modules/.cache && pnpm rebuild`, and nothing[0m
+[1mit does next happens without you.[0m
+52s waiting, which is 17% of its whole life. Nothing's lost yet.
+[90mThe same request has arrived 3 times under fresh ids and is[0m
+[90mfolded into one entry, so this is one decision rather than 3 —[0m
+[90mthe platform doesn't emit the signal that would settle it.[0m
+typecheck-works… has been silent 2m50s with no call open, which
+[2;90m↕ 1–8 of 16 · ⇞⇟ · off screen: risk, state[0m
+[1m▸ answer in the left pane — ⏎ jumps focus[0m
 [90m────────────────────────────────────────────────────────────────[0m
 [2;90mj/k ␣ ⏎ f o y · n voice · t tokens[0m                  [2;90mtoken rate →[0m

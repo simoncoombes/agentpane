@@ -8,6 +8,7 @@ import (
 
 	"github.com/simoncoombes/agentpane/internal/config"
 	"github.com/simoncoombes/agentpane/internal/event"
+	"github.com/simoncoombes/agentpane/internal/narrate"
 	"github.com/simoncoombes/agentpane/internal/slug"
 	"github.com/simoncoombes/agentpane/internal/state"
 	"github.com/simoncoombes/agentpane/internal/term"
@@ -95,13 +96,28 @@ type UIState struct {
 	// Layout.
 	WidthMode string // "wide" (64) | "narrow" (44), toggled with w (§3.1)
 	RightCol  string // "since" | "rate" (§5.1 t)
-	// SparkScale holds each agent's sparkline scale so bars settle instead of
-	// jumping. §3.4 scales an agent against its own max over the trailing 60s,
-	// but that max changes every time a tall bucket rolls out of the window,
-	// and every remaining bar grows to fill the new scale — the activity did
-	// not change, the yardstick did. A fallen max is held for sparkHold before
-	// it is adopted, so the shape can only rescale a few times a minute.
-	SparkScale map[string]sparkScale
+	// pendingNamed holds agent ids the narrator interpolated into text that has
+	// not necessarily been DRAWN yet. Only a drawn name freezes a slug
+	// (§13.1(a)); see publishDrawnNames.
+	pendingNamed []string
+
+	// Narration (§13.2). Voice is the requested mode, not necessarily the one
+	// drawn: narrationPlan may withhold a region the pane has no room for, and
+	// the request survives so the mode reappears when the pane grows.
+	Voice VoiceMode
+	// Narr is the narrator's carry-over: the commentary and what it has already
+	// claimed. The Model advances it as events arrive (advanceNarration); the
+	// renderer only reads it, and re-derives the standup from the world.
+	Narr narrate.Memory
+	// CommScroll is rendered commentary lines up from the BOTTOM. Zero means
+	// auto-follow — the two are the same thing on purpose, so a follow flag and
+	// a scroll offset can never disagree about where the view is (§13.2:
+	// auto-follow pauses when the user scrolls up and resumes at the bottom).
+	CommScroll int
+	// StandupScroll is standup body lines down from the top. The standup is
+	// top-anchored because its first sentence is the one that matters; the
+	// commentary is bottom-anchored because its last one is.
+	StandupScroll int
 
 	// Selection and expansion (§3.3, §3.17).
 	SelID     string
@@ -169,39 +185,19 @@ type UIState struct {
 	Emitter *term.Emitter
 }
 
+// voice is the requested narration mode, defaulted. An unset value means the
+// zero UIState (and every test that builds one by hand) narrates, which is what
+// makes §13.2 the default behaviour rather than an opt-in.
+func (v *UIState) voice() VoiceMode {
+	switch v.Voice {
+	case VoiceFull, VoiceStandup, VoiceOff:
+		return v.Voice
+	default:
+		return VoiceFull
+	}
+}
+
 // newUIState builds view state from config defaults.
-// sparkHold is how long a fallen sparkline maximum is kept before the smaller
-// one is adopted. Long enough that a burst rolling out of the window does not
-// visibly rescale the row; short enough that a genuinely quieter agent
-// re-scales within a few seconds.
-const sparkHold = 6 * time.Second
-
-// sparkScale is one agent's held sparkline scale.
-type sparkScale struct {
-	max   int
-	until time.Time
-}
-
-// sparkFloor returns the scale to draw id against, holding a fallen maximum
-// for sparkHold. A rising max is adopted immediately: a new peak is real
-// information and must never be clipped.
-// The key carries the EFFECTIVE metric, not just the agent: sparkline falls
-// back from tokens to calls when every token bucket is empty, and a floor of
-// 800 tokens applied to a 3-call window flattens every cell to ▁ — scaled by
-// the wrong yardstick, which is the jitter this hold exists to remove.
-func (v *UIState) sparkFloor(id, metric string, max int, now time.Time) int {
-	if v.SparkScale == nil {
-		v.SparkScale = map[string]sparkScale{}
-	}
-	key := id + "\x00" + metric
-	held, ok := v.SparkScale[key]
-	if !ok || max >= held.max || !now.Before(held.until) {
-		v.SparkScale[key] = sparkScale{max: max, until: now.Add(sparkHold)}
-		return max
-	}
-	return held.max
-}
-
 func newUIState(cfg config.Config) *UIState {
 	v := &UIState{
 		WidthMode: cfg.Width,
@@ -210,10 +206,13 @@ func newUIState(cfg config.Config) *UIState {
 		// already shouts about on its own; the rate answers "what is this
 		// agent doing right now?", which is the question a row full of a
 		// resetting stopwatch could not. `t` swaps back (§5.1, §3.18).
-		RightCol:    "rate",
+		RightCol: "rate",
+		// The voice is on by default: §13.2 makes narration a first-class
+		// region, not a mode. narrationPlan withholds it wherever the tree
+		// would lose a row, so "on" costs nothing on a pane too small for it.
+		Voice:       VoiceFull,
 		SelID:       event.MainAgentID,
 		Pins:        map[string]int{},
-		SparkScale:  map[string]sparkScale{},
 		Logs:        NewEventLog(),
 		Slugs:       slug.New(cfg.SlugMax),
 		MaxCalls:    cfg.MaxCallsShown,

@@ -28,11 +28,14 @@ type Config struct {
 	ResolveGrace time.Duration
 }
 
-// There is deliberately no quiet grace period. An agent that has shown nothing
-// at all does not earn a tree row by outliving a timer: that rule rendered the
-// ~90s phantoms of session 6d53f05d as unnamed rows and then deleted each row
-// the moment it settled. Row eligibility is evidence-based and latched — see
-// Machine.quiet.
+// There is deliberately no separate quiet grace knob: suppression reuses
+// StuckAfter. An agent that has shown nothing does not EARN a row by outliving
+// a timer — eligibility stays evidence-based and latched (Machine.quiet) — but
+// it is not suppressed inside StuckAfter of its spawn either (§13.1), because
+// "nothing recorded" and "hasn't started yet" are indistinguishable for the
+// first second or two, and hiding a real agent is worse than briefly showing a
+// phantom. One threshold covers both: the point at which silence stops being
+// normal is the point at which absence of activity becomes evidence.
 
 // DefaultConfig returns the SPEC defaults.
 func DefaultConfig() Config {
