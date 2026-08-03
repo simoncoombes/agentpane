@@ -6,3 +6,6 @@
 *.out
 *.test
 *.prof
+
+# macOS
+.DS_Store
