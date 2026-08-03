@@ -23,6 +23,18 @@ type facts struct {
 	runFor   time.Duration
 	hasRun   bool
 
+	// logStart is the commentary's clock origin, and it is deliberately NOT
+	// runStart. A run begins at the prompt that started it, but the commentary
+	// records the whole session the pane can see — and a pane attaches to a
+	// session already in progress, so the transcript replays spawns and returns
+	// that PREDATE the current run. Stamping those against runStart clamped
+	// every one of them to 0:00: a session 40 minutes old rendered six entries
+	// all at 0:00, in an order that then looked arbitrary ("agent returned"
+	// printed above "Spawned agent"). The log's origin is the earliest thing the
+	// world remembers; the run's own duration stays on runFor, where the standup
+	// wants it.
+	logStart time.Time
+
 	// Populations, in World order (which is §3.6 render order), so any list of
 	// names the prose builds matches the order of the rows above it.
 	asks    []state.Ask
@@ -98,6 +110,22 @@ func newFacts(w state.World, now time.Time, names *namer) *facts {
 	}
 	if now.After(f.runStart) {
 		f.runFor = now.Sub(f.runStart)
+	}
+
+	// The log's origin: the earliest moment any agent or the run itself is known
+	// to have started. Taking the minimum is what keeps pre-run history ordered
+	// instead of piled at zero.
+	f.logStart = f.runStart
+	for _, a := range w.Agents {
+		if a.SpawnedAt.IsZero() {
+			continue
+		}
+		if f.logStart.IsZero() || a.SpawnedAt.Before(f.logStart) {
+			f.logStart = a.SpawnedAt
+		}
+	}
+	if f.logStart.IsZero() {
+		f.logStart = now
 	}
 
 	f.asks = w.Asks

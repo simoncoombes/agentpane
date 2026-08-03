@@ -47,10 +47,10 @@ import (
 func observe(f *facts, mem *Memory) []Entry {
 	var cand []Entry
 	at := func(t time.Time) time.Duration {
-		if t.IsZero() || !t.After(f.runStart) {
+		if t.IsZero() || !t.After(f.logStart) {
 			return 0
 		}
-		return t.Sub(f.runStart)
+		return t.Sub(f.logStart)
 	}
 
 	// --- the run itself ---
@@ -75,7 +75,7 @@ func observe(f *facts, mem *Memory) []Entry {
 	// do. The standup carries the live number.
 	if n := len(f.w.Quiet); n > 0 {
 		cand = append(cand, Entry{Key: "run-quiet", At: 0, Tone: ToneQuiet, Text: fmt.Sprintf(
-			"%s were announced and never did anything — no name, no tool call, no tokens. Folded into the suppressed line.",
+			"%s announced and never did anything — no name, no tool call, no tokens. Folded into the suppressed line.",
 			countOf(n, "subagent"))})
 	}
 

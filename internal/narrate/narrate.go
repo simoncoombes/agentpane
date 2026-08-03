@@ -541,6 +541,41 @@ func stripQuoted(s string) string {
 // keeps re-narration byte-identical. The invariant it maintains — Entries is
 // ordered by At — is what the renderer's timestamp column depends on, and it
 // holds however out of order the underlying events were detected in.
+// entryRank orders entries that share a timestamp by what must have happened
+// first. Ties are not hypothetical: a phantom subagent is announced and settles
+// inside the same second, so without this the log could read "agent returned"
+// above "Spawned agent" — an ordering the events contradict. The rank is derived
+// from the Key prefix, so no entry has to carry an ordering field.
+func entryRank(key string) int {
+	switch {
+	case key == "run" || strings.HasPrefix(key, "run:"):
+		return 0
+	case strings.HasPrefix(key, "spawn:"), strings.HasPrefix(key, "mate:"):
+		return 1
+	case strings.HasPrefix(key, "ask:"):
+		return 2
+	case strings.HasPrefix(key, "stuck:"):
+		return 3
+	case strings.HasPrefix(key, "ask-done:"):
+		return 4
+	case strings.HasPrefix(key, "done:"):
+		return 5
+	case strings.HasPrefix(key, "mine:"):
+		return 6
+	case key == "run-quiet":
+		return 7 // a summary of the population, so it follows the events
+	}
+	return 4
+}
+
+// before reports whether a sorts ahead of b: by time, then by causal rank.
+func before(a, b Entry) bool {
+	if a.At != b.At {
+		return a.At < b.At
+	}
+	return entryRank(a.Key) < entryRank(b.Key)
+}
+
 func mergeEntries(log, fresh []Entry) []Entry {
 	switch {
 	case len(fresh) == 0:
@@ -551,7 +586,7 @@ func mergeEntries(log, fresh []Entry) []Entry {
 	out := make([]Entry, 0, len(log)+len(fresh))
 	i, j := 0, 0
 	for i < len(log) && j < len(fresh) {
-		if fresh[j].At < log[i].At {
+		if before(fresh[j], log[i]) {
 			out = append(out, fresh[j])
 			j++
 			continue
