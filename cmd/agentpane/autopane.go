@@ -415,14 +415,24 @@ func autopaneScript(sessionUUID, profile, command string) string {
 							set newSession to (split vertically with same profile command "` + cmd + `")
 						end try
 					end tell
-					-- Resize the PARENT, not the new pane: shrinking the new
-					-- pane alone moves the split line without giving the space
-					-- back, leaving dead width. Driving the parent to
-					-- (total - target) moves the divider and the new pane takes
-					-- the remainder (within a column, since widths are derived
-					-- from pixels).
+					-- Resizing the PARENT to (total - target) moves the divider
+					-- and lets the new pane take the remainder; shrinking the new
+					-- pane alone would leave dead width instead. But that write
+					-- lands while iTerm2 is still laying the split out, so on its
+					-- own it is a race: the same script produced panes of 59, 78,
+					-- 86, 91, 126 and 149 columns across six tabs when 64 was
+					-- asked for. So verify and correct, then confirm — the direct
+					-- write to the new pane is the deterministic one, and by the
+					-- time it runs the divider has already moved, so it costs no
+					-- dead space. Widths come from pixels, so accept ±2.
 					try
 						set columns of theSession to (parentCols - target)
+						repeat 3 times
+							if (columns of newSession) - target > 2 or target - (columns of newSession) > 2 then
+								delay 0.08
+								set columns of newSession to target
+							end if
+						end repeat
 					end try
 					return
 				end if
