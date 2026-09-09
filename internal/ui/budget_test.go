@@ -230,7 +230,12 @@ func TestPinsNeverScroll(t *testing.T) {
 	}
 	// Enough rows for main(2) + 8 collapsed agents (16) + selected minimal
 	// expansion + chrome, but not for every pin.
-	rows := 36
+	//
+	// This was 36 while the band, the standup and the contention block still sat
+	// below the tree. Removing them handed the tree about ten more rows, so the
+	// height at which the pin budget actually bites came down with it: at 36 every
+	// pin now fits and the degradation this test exists to check never happens.
+	rows := 26
 	frame, _ := renderFrame(w, v, 64, rows, demoNow(), NewPalette(2, false))
 	plain := stripANSI(frame)
 	if strings.Contains(plain, " / 8") {

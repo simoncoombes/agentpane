@@ -8,7 +8,6 @@ import (
 
 	"github.com/simoncoombes/agentpane/internal/config"
 	"github.com/simoncoombes/agentpane/internal/event"
-	"github.com/simoncoombes/agentpane/internal/narrate"
 	"github.com/simoncoombes/agentpane/internal/runstore"
 	"github.com/simoncoombes/agentpane/internal/slug"
 	"github.com/simoncoombes/agentpane/internal/state"
@@ -360,7 +359,6 @@ func (m *Model) afterMachine(derived []event.Event) {
 	m.syncConnection()
 	m.syncAsks()
 	m.syncFollow()
-	m.advanceNarration()
 	if m.world.Rev != prevRev {
 		m.writeStatefile()
 		m.dirty = true
@@ -576,11 +574,6 @@ func (m *Model) resetForSession(sessionID string) {
 	m.v.Slugs = slug.New(m.cfg.Cfg.SlugMax)
 	m.v.Pins = map[string]int{}
 	m.v.PinSeq = 0
-	// The narration is per-session too: session A's commentary under session B's
-	// header would be the same leak the log and the slug table are reset for.
-	m.v.Narr = narrate.Memory{}
-	m.v.CommScroll = 0
-	m.v.StandupScroll = 0
 	m.v.ScrollTop = 0
 	m.v.SelID = event.MainAgentID
 	m.v.InspectorOpen = false

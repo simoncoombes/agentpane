@@ -27,8 +27,7 @@ func renderOverlay(w state.World, v *UIState, cols, rows int, pal Palette) [][]s
 	add(key("f", "follow the most recent event"))
 	add(key("o", "open the current file in $EDITOR"))
 	add(key("y/Y", "yank error/command · yank the inspector log"))
-	add(key("n", "voice: standup + commentary → standup → off"))
-	add(key("⇞/⇟", "page the commentary · the inspector when it's open"))
+	add(key("⇞/⇟", "page the inspector when it's open"))
 	add(key("t", "right column: since ↔ token rate"))
 	add(key("w", "toggle wide 64 / narrow 44"))
 	// 1–9 is listed only when it does something: the picker is withheld on a

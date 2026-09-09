@@ -8,7 +8,6 @@ import (
 
 	"github.com/simoncoombes/agentpane/internal/config"
 	"github.com/simoncoombes/agentpane/internal/event"
-	"github.com/simoncoombes/agentpane/internal/narrate"
 	"github.com/simoncoombes/agentpane/internal/slug"
 	"github.com/simoncoombes/agentpane/internal/state"
 	"github.com/simoncoombes/agentpane/internal/term"
@@ -96,28 +95,6 @@ type UIState struct {
 	// Layout.
 	WidthMode string // "wide" (64) | "narrow" (44), toggled with w (§3.1)
 	RightCol  string // "since" | "rate" (§5.1 t)
-	// pendingNamed holds agent ids the narrator interpolated into text that has
-	// not necessarily been DRAWN yet. Only a drawn name freezes a slug
-	// (§13.1(a)); see publishDrawnNames.
-	pendingNamed []string
-
-	// Narration (§13.2). Voice is the requested mode, not necessarily the one
-	// drawn: narrationPlan may withhold a region the pane has no room for, and
-	// the request survives so the mode reappears when the pane grows.
-	Voice VoiceMode
-	// Narr is the narrator's carry-over: the commentary and what it has already
-	// claimed. The Model advances it as events arrive (advanceNarration); the
-	// renderer only reads it, and re-derives the standup from the world.
-	Narr narrate.Memory
-	// CommScroll is rendered commentary lines up from the BOTTOM. Zero means
-	// auto-follow — the two are the same thing on purpose, so a follow flag and
-	// a scroll offset can never disagree about where the view is (§13.2:
-	// auto-follow pauses when the user scrolls up and resumes at the bottom).
-	CommScroll int
-	// StandupScroll is standup body lines down from the top. The standup is
-	// top-anchored because its first sentence is the one that matters; the
-	// commentary is bottom-anchored because its last one is.
-	StandupScroll int
 
 	// Selection and expansion (§3.3, §3.17).
 	SelID     string
@@ -185,18 +162,6 @@ type UIState struct {
 	Emitter *term.Emitter
 }
 
-// voice is the requested narration mode, defaulted. An unset value means the
-// zero UIState (and every test that builds one by hand) narrates, which is what
-// makes §13.2 the default behaviour rather than an opt-in.
-func (v *UIState) voice() VoiceMode {
-	switch v.Voice {
-	case VoiceFull, VoiceStandup, VoiceOff:
-		return v.Voice
-	default:
-		return VoiceFull
-	}
-}
-
 // newUIState builds view state from config defaults.
 func newUIState(cfg config.Config) *UIState {
 	v := &UIState{
@@ -206,11 +171,7 @@ func newUIState(cfg config.Config) *UIState {
 		// already shouts about on its own; the rate answers "what is this
 		// agent doing right now?", which is the question a row full of a
 		// resetting stopwatch could not. `t` swaps back (§5.1, §3.18).
-		RightCol: "rate",
-		// The voice is on by default: §13.2 makes narration a first-class
-		// region, not a mode. narrationPlan withholds it wherever the tree
-		// would lose a row, so "on" costs nothing on a pane too small for it.
-		Voice:       VoiceFull,
+		RightCol:    "rate",
 		SelID:       event.MainAgentID,
 		Pins:        map[string]int{},
 		Logs:        NewEventLog(),

@@ -101,7 +101,4 @@ func TestSlugNeverTruncatedAt44(t *testing.T) {
 			t.Errorf("slug %q truncated or missing at 44 cols", sl)
 		}
 	}
-	if !strings.Contains(plain, "⚠ 2 agents editing db/schema.ts") {
-		t.Errorf("contention row clipped at 44 cols")
-	}
 }

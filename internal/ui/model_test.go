@@ -305,8 +305,8 @@ func TestDemoPauseStep(t *testing.T) {
 	if stub.paused != 1 || !m.v.DemoPaused {
 		t.Errorf("p did not pause: %+v", stub)
 	}
-	// Step is `.`, not `n`: §13.2 gives `n` to the voice cycle, and the demo is
-	// where the voice matters most (it is what the mock's own `n` does).
+	// Step is `.`, not `n`. It moved there when `n` took the voice cycle; the
+	// voice is gone but the binding stayed (see TestDemoStepKeyIsDot).
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".")})
 	if stub.stepped != 1 {
 		t.Errorf(". did not step: %+v", stub)
@@ -317,21 +317,23 @@ func TestDemoPauseStep(t *testing.T) {
 	}
 }
 
-// A deduped ask renders one band entry with ×n and no ghost tree rows
-// (§3.7.7, PART 10).
-func TestDedupedAskOneBandEntryNoGhostRows(t *testing.T) {
+// A deduped ask collapses to ONE tree row carrying the retry count, and the
+// folded retry agents never become rows of their own (§3.7.7, PART 10).
+//
+// This used to assert the band's `permission ×3` and `+2 retry agents folded`
+// lines as well. That region is gone; the dedupe it was reporting on is not, and
+// the tree is where it now has to be visible.
+func TestDedupedAskOneTreeRowNoGhostRows(t *testing.T) {
 	m, events := demoMachine(t)
 	v, w := demoView(t, m, events)
 	frame, _ := renderFrame(w, v, 64, 44, demoNow(), NewPalette(2, false))
 	plain := stripANSI(frame)
-	if !strings.Contains(plain, "permission ×3") {
-		t.Errorf("band lost the ×3 dedupe count")
+	// The retry count rides on the row itself.
+	if !strings.Contains(plain, "fix-ts2345-fallout  ↺2") {
+		t.Errorf("the deduped row lost its ↺2 retry count:\n%s", plain)
 	}
-	if !strings.Contains(plain, "+2 retry agents folded") {
-		t.Errorf("band lost the folded-ghosts line")
-	}
-	if got := strings.Count(plain, "fix-ts2345-fallout"); got != 2 {
-		t.Errorf("fix-ts2345-fallout appears %d times, want 2 (band + tree, no ghosts)", got)
+	if got := strings.Count(plain, "fix-ts2345-fallout"); got != 1 {
+		t.Errorf("fix-ts2345-fallout appears %d times, want 1 (its tree row, no ghosts)", got)
 	}
 	if len(w.Agents) != 8 {
 		t.Errorf("ghost agents leaked into the tree: %d rows", len(w.Agents))

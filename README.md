@@ -134,9 +134,9 @@ agentpane --demo
 ```
 
 This replays a canned scenario (SPEC §2.10): a blocked permission ask, a
-stalled agent, a long open Bash call, a file-contention warning, a decayed
+stalled agent, a long open Bash call, a decayed
 finished agent, a queued agent, and a low-telemetry teammate. `p` pauses the
-replay, `n` steps one event, `--demo-speed 2.0` and `--demo-seek 90` jump
+replay, `.` steps one event, `--demo-speed 2.0` and `--demo-seek 90` jump
 around. Everything the live view can show is reachable here.
 
 To attach to a real session:
@@ -330,7 +330,7 @@ color = true              # false == NO_COLOR
 | `j` / `↓`, `k` / `↑` | select next / previous (no wrap; cancels follow) |
 | `g` / `G` | first / last row |
 | `space` | pin/unpin the selected agent's tool calls (no-op on decayed/queued) |
-| `⏎` | open the inspector; on the alert band, focus the left pane instead |
+| `⏎` | open the inspector; on the condensed screen's alert row, focus the left pane instead |
 | `esc` / `q` | close the inspector - never kills anything; `q` never quits the pane |
 | `f` | follow mode: inspector tracks the most recently active agent |
 | `o` | open the selected agent's current file in `$EDITOR` (new iTerm2 tab) |
@@ -340,9 +340,8 @@ color = true              # false == NO_COLOR
 | `[` / `]` | previous / next run in idle or history view |
 | `1`-`9` | switch attached session (idle screen, only when unpinned and more than one session is live; no-op otherwise) |
 | `t` | cycle the right column: since-last-event, token burn rate (persisted) |
-| `n` | voice: standup + commentary, standup, off |
-| `⇞` / `⇟` | page the commentary; the inspector when it is open; the standup body when the commentary is hidden |
-| `esc` (on the digest) | dismiss the away-digest band (a live ask entry stays) |
+| `⇞` / `⇟` | page the inspector when it is open |
+| `esc` (on the digest) | dismiss the away-digest change marks |
 | `?` | key help overlay, dropped-event count, source name |
 | `ctrl-c` | quit agentpane; agents keep running (asks to confirm when agents are live) |
 | `p` / `.` | demo only: pause/resume, step one event |
@@ -350,25 +349,24 @@ color = true              # false == NO_COLOR
 There is no kill key. Pressing `x` explains why:
 `read-only — subagents cannot be killed`.
 
-## Narration
+## Below the tree: nothing
 
-Under the tree sit two fixed-height regions: a **standup** (7 rows, 11 when the
-commentary is hidden) and a **commentary** log (11 rows, newest at the bottom,
-auto-following unless you have scrolled up). `n` cycles them. Both are templated
-locally from event data - there is no model call, and the same world always
-produces the same words.
+The tree owns every row between the header and the inspector. There is no
+narration, no alert band and no contention block under it - those regions were
+removed, and what was a negotiation over the leftover rows is now a subtraction.
+A pane that used to spend ten or more rows on prose spends them on agents.
 
-The standup always reads in the same order: what you must do, what is at risk,
-then the state, ending on the action or on saying that none is needed. It counts
-everything from the world rather than from a template, marks its own bad calls
-when the state contradicts an earlier line, and hedges out loud whenever it is
-inferring rather than reporting.
+The alerts themselves are not gone, only their region. Three surfaces still
+carry them:
 
-Narration sits below the tree so the tree's rows never move when a sentence gets
-longer or the voice changes. It is also drawn only when the tree can keep every
-row and every activity line: on a pane that the tree already fills, `n` selects
-the mode and says `no room`, and the region appears as soon as the pane grows.
-Narration may cost tool-call history and nothing else.
+- the header's `⚑ n NEEDS YOU` count, which is the first thing read;
+- the `⚑` glyph and `blocked · <what it asked for>` line on the agent's own
+  tree row;
+- the inspector, which states the exact command the agent is waiting on.
+
+Under 12 rows the condensed screen still draws a single one-line alert directly
+under the header (`⚑ <slug> permission ×3`), because at that height the tree
+cannot say it. `⏎` there jumps focus to the left pane.
 
 ## Status bar (`--oneline`)
 
@@ -444,7 +442,7 @@ the absence, which means:
   per-tool events. They render as a distinct `◇` row with `limited telemetry`,
   no pips, no sparkline, no liveness clock, and they never trigger alerts.
 - **Denials clear slowly.** Granting a permission produces an event within
-  ~1s; denying with Esc produces nothing. After you answer, the band shows
+  ~1s; denying with Esc produces nothing. After you answer, the row shows
   `resolving…` and clears on the agent's next event or a short grace period.
   It never claims an outcome it did not observe.
 - **Some markers are inferred, and look it.** The `↺n` retry counter and the

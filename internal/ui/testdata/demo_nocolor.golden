@@ -13,16 +13,27 @@ AGENTS 8[2m · 3f9c[0m                                    [1m⚑ 2 NEEDS YOU
 [2m├─╮[0m
 [2m│ ╰[0m[1m⚑[0m[1m typecheck-works…[0m                               [1m ·····[0m[1m 2m50s[0m
 [2m│    [0m[2m⤷ [0m[1mno call open · silent 2m50s[0m          [2m▪▪▫·[0m[2m first edit[0m[2m  33k[0m
-[2m│      │ [0m✔[2m Edit types/session.ts[0m[2m  +11 −2[0m[2m  +3 more[0m
+[2m│      │ [0m✔[2m Read tsconfig.json[0m
+[2m│      │ [0m✔[2m Edit packages/api/tsconfig.json[0m[2m  +3 −1[0m
+[2m│      │ [0m✔[2m Edit packages/worker/tsconfig.json[0m[2m  +2 −0[0m
+[2m│      │ [0m✔[2m Edit types/session.ts[0m[2m  +11 −2[0m
 [2m├─╮[0m
 [2m│ ╰[0m● run-auth-tests                              ◐ in Bash 3m12s
 [2m│    [0m[2m⤷ [0mBash pnpm test --watch  ✓ verified   [2m▪▫··[0m[2m first tool[0m[2m  38k[0m
+[2m│      │ [0m✔[2m Read auth/session.test.ts[0m
+[2m│      │ [0m✔[2m Bash pnpm test --filter auth --run[0m
 [2m├─╮[0m
 [2m│ ╰[0m● audit-users-schema                            ⠼▇▇···[2m 0.1k/s[0m
 [2m│    [0m[2m⤷ [0mGrep "createUser" src/**             [2m▪▪▫·[0m[2m first edit[0m[2m  52k[0m
+[2m│      │ [0m✔[2m Grep "editUser" src/**[0m
+[2m│      │ [0m✔[2m Edit db/users.ts[0m[2m  +18 −6[0m
+[2m│      │ [0m✔[2m Read db/indexes.ts[0m
+[2m│      │ [0m✔[2m Grep "createUser" src/**[0m[2m  +3 more[0m
 [2m├─╮[0m
 [2m│ ╰[0m● write-email-index                              ▇▇▇▇▇[2m 0.3k/s[0m
 [2m│    [0m[2m⤷ [0mEdit db/migrations/0042.sql          [2m▪▪▫·[0m[2m first edit[0m[2m  86k[0m
+[2m│      │ [0m✔[2m Edit db/migrations/0042.sql[0m[2m  +30 −2[0m
+[2m│      │ [0m✔[2m Edit db/migrations/0042.sql[0m[2m  +84 −3[0m[2m  +4 more[0m
 [2m├─╮[0m
 [2m│ ╰[0m[2m○[0m[2m document-constr…[0m[2m  queued[0m                                   
 [2m├─╮[0m
@@ -30,15 +41,4 @@ AGENTS 8[2m · 3f9c[0m                                    [1m⚑ 2 NEEDS YOU
 [2m╰─╮[0m
 [2m  ╰[0m[2m◇[0m[2m reviewer[0m[2m  limited telemetry[0m                                
 [2m────────────────────────────────────────────────────────────────[0m
-[1m⚠ 2 agents editing db/schema.ts[0m
-[2m  audit-users-schema + write-email-index[0m
-[2m────────────────────────────────────────────────────────────────[0m
-[1;7m⚑ NEEDS YOU[0m                                                     
-[1mfix-ts2345-fallout[0m  permission[1m ×3[0m                            [1m52s[0m
-run: rm -rf node_modules/.cache && pnpm rebuild
-[2m+2 retry agents folded[0m
-[1mtypecheck-works…[0m  stalled[2m · no call open[0m                   [1m2m50s[0m
-[2mo opens the log · y yanks the command[0m
-[1m▸ answer in the left pane — ⏎ jumps focus[0m
-[2m────────────────────────────────────────────────────────────────[0m
-[2mj/k ␣ ⏎ f o y · n voice · t tokens[0m                  [2mtoken rate →[0m
+[2mj/k ␣ ⏎ f o y · t tokens[0m                            [2mtoken rate →[0m

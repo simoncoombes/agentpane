@@ -7,7 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/simoncoombes/agentpane/internal/event"
-	"github.com/simoncoombes/agentpane/internal/narrate"
 	"github.com/simoncoombes/agentpane/internal/state"
 )
 
@@ -172,9 +171,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 			}
 			m.dirty = true
 		}
-	case "n":
-		m.cycleVoice()
-
 	case ".":
 		// Demo step. It used to be `n`, which §13.2 gives to the voice — and the
 		// demo is the one place the voice matters most, since it is what the
@@ -188,116 +184,27 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// cycleVoice is `n`: standup + commentary → standup → off (§13.2).
-//
-// The toast names the mode that was REQUESTED and, when the pane cannot hold it,
-// says so. Silently landing on a different mode than the one the key just
-// selected is the kind of thing that makes a keymap feel broken.
-func (m *Model) cycleVoice() {
-	m.v.Voice = m.v.voice().next()
-	m.v.CommScroll = 0
-	m.v.StandupScroll = 0
-	label := "voice: " + m.v.Voice.label()
-	if m.v.Voice != VoiceOff && !narrationFits(m.world, m.v, m.cols, m.rows, m.clock, m.pal) {
-		label += " (no room — the tree keeps its rows)"
-	}
-	m.setToast(label, false)
-	m.dirty = true
-}
-
-// pageKey is ⇞/⇟. Three regions can scroll and only one of them owns the keys at
-// a time; the rule is "whatever is in the foreground":
-//
-//  1. the inspector, when it is open — it is a view the user deliberately opened,
-//     and the suppressed-agents list inside it is the one that most needs paging
-//     (§13.3 Q8);
-//  2. otherwise the commentary, which is what §13.2 assigns the keys to;
-//  3. otherwise the standup body, which is only scrollable when the commentary
-//     is hidden and it therefore owns the region on its own.
+// pageKey is ⇞/⇟. The inspector is the only pageable region left: the
+// commentary and the standup body that used to share these keys are gone.
 //
 // j/k are never involved: they stay on the tree at all times.
 func (m *Model) pageKey(up bool) {
-	switch {
-	case m.v.InspectorOpen:
-		page := inspectorMax - 5
-		if page < 1 {
-			page = 1
-		}
-		if up {
-			m.v.InspectorScroll += page
-		} else {
-			m.v.InspectorScroll -= page
-			if m.v.InspectorScroll < 0 {
-				m.v.InspectorScroll = 0
-			}
-		}
-	case m.voiceDrawn() == VoiceFull:
-		total := commentaryTotalLines(m.v.Narr.Entries,
-			narrate.CommandsOnScreen(m.world), frameWidth(m.v, m.cols))
-		max := total - commentaryBodyRows()
-		if max < 0 {
-			max = 0
-		}
-		if up {
-			m.v.CommScroll += commentaryPage()
-			if m.v.CommScroll > max {
-				m.v.CommScroll = max
-			}
-		} else {
-			m.v.CommScroll -= commentaryPage()
-			if m.v.CommScroll < 0 {
-				m.v.CommScroll = 0 // back at the bottom: auto-follow resumes
-			}
-		}
-	case m.voiceDrawn() == VoiceStandup:
-		st := narrateNow(m.world, m.v, m.clock)
-		width := frameWidth(m.v, m.cols)
-		// The band's lines are part of the body now, so the scroll extent must
-		// count them: without them ⇟ stopped short of the prose whenever an ask
-		// was outstanding.
-		total := len(standupBody(st, bandEntries(m.world, m.v, m.clock), m.v.Digest, width, m.pal))
-		show := standupBodyRows(VoiceStandup) - 1
-		max := total - show
-		if max < 0 {
-			max = 0
-		}
-		if up {
-			m.v.StandupScroll -= show
-			if m.v.StandupScroll < 0 {
-				m.v.StandupScroll = 0
-			}
-		} else {
-			m.v.StandupScroll += show
-			if m.v.StandupScroll > max {
-				m.v.StandupScroll = max
-			}
-		}
-	default:
+	if !m.v.InspectorOpen {
 		return
 	}
+	page := inspectorMax - 5
+	if page < 1 {
+		page = 1
+	}
+	if up {
+		m.v.InspectorScroll += page
+	} else {
+		m.v.InspectorScroll -= page
+		if m.v.InspectorScroll < 0 {
+			m.v.InspectorScroll = 0
+		}
+	}
 	m.dirty = true
-}
-
-// voiceDrawn is the mode actually on screen, which is what the page keys must
-// follow: paging a region the geometry withheld would move an invisible view.
-// A pane showing the band alone reports VoiceOff — there is no prose to page.
-func (m *Model) voiceDrawn() VoiceMode {
-	if idlePhase(m.world) || m.cols < 40 || m.rows < 12 {
-		return VoiceOff
-	}
-	top := m.v.ScrollTop
-	plan := narrationPlan(m.world, m.v, frameWidth(m.v, m.cols),
-		narrationLeftover(m.world, m.v, m.cols, m.rows, m.clock, m.pal), m.clock, m.pal)
-	m.v.ScrollTop = top
-	return plan.mode
-}
-
-// advanceNarration folds the current world into the narrator's memory. The Model
-// calls it after every machine update; it is the only place the commentary grows.
-func (m *Model) advanceNarration() {
-	if len(m.v.advanceNarration(m.world, m.clock, frameWidth(m.v, m.cols))) > 0 {
-		m.dirty = true
-	}
 }
 
 func (m *Model) liveAgents() bool {
@@ -315,16 +222,16 @@ func (m *Model) selectionOrder() []string {
 	return m.v.selectionIDs(m.world, m.bandPresent(), quietLineDrawn(m.world, m.cols))
 }
 
+// bandPresent reports whether a selectable alert row is actually PAINTED. Only
+// the §3.9 condensed screen draws one now — the region below the tree that used
+// to carry it on every active frame is gone — so this is geometry-derived for
+// the same reason quietLineDrawn is: offering selBand on a frame that never drew
+// it means j/k moves an invisible highlight.
 func (m *Model) bandPresent() bool {
-	if m.v.Digest != nil || len(m.world.Asks) > 0 {
-		return true
+	if idlePhase(m.world) || m.cols < 40 || m.rows >= 12 {
+		return false
 	}
-	for _, a := range m.world.Agents {
-		if a.Status == state.StatusStuck {
-			return true
-		}
-	}
-	return false
+	return len(bandEntries(m.world, m.v, m.clock)) > 0
 }
 
 // moveSel moves selection by id, never by index (§3.13), and cancels follow

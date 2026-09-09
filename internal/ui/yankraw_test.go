@@ -66,17 +66,15 @@ func TestYankTakesTheRawCommandNotTheFlattenedOne(t *testing.T) {
 	}
 }
 
-// The demo step key moved to `.` so `n` could take the voice (§13.2). Both must
-// work, and `n` must not step the demo.
-func TestVoiceKeyDoesNotStepTheDemo(t *testing.T) {
+// The demo step key is `.`. It moved off `n` when `n` took the voice (§13.2);
+// the voice is gone but the binding stayed, because a keymap that shifts under
+// readers who learned it is worse than an unused letter.
+func TestDemoStepKeyIsDot(t *testing.T) {
 	m, _ := newTestModel(t)
 	stub := m.cfg.Demo.(*demoStub)
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	if stub.stepped != 0 {
 		t.Errorf("n stepped the demo %d times", stub.stepped)
-	}
-	if m.v.Voice == VoiceFull {
-		t.Errorf("n did not cycle the voice off full")
 	}
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".")})
 	if stub.stepped != 1 {
