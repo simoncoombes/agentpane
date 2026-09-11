@@ -13,7 +13,8 @@ handful you need on day one.
 | `agentpane --demo-speed 2.0` | demo playback speed multiplier |
 | `agentpane --demo-seek 90` | jump the demo to t=90s |
 | `agentpane hook` | read one hook JSON on stdin, forward, exit 0 always |
-| `agentpane autopane` | SessionStart hook: auto-open the TUI in an iTerm2 split (see [INSTALL.md](INSTALL.md)), exit 0 always |
+| `agentpane autopane` | SessionStart hook: auto-open the TUI in a terminal split (see [INSTALL.md](INSTALL.md)), exit 0 always |
+| `agentpane autopane --explain` | run the same guard chain against the current environment and print each verdict, without opening anything |
 | `agentpane doctor` | check hooks, competing settings (visualizers, alerting, symlinks), socket, terminal escapes, glyphs; print the hook snippet if missing |
 | `agentpane doctor --session <id>` | the same checks aimed at one pinned pane: that session's attach target and socket, no cwd guess |
 | `agentpane runs` | list persisted runs from every session |
@@ -21,7 +22,7 @@ handful you need on day one.
 | `agentpane runs show <id>` | print one run summary |
 | `agentpane --oneline` | single-row status output for a tmux/iTerm2 status bar, then exit |
 | `agentpane --oneline --session <id>` | the same row for exactly one session's pane |
-| `agentpane --width wide\|narrow` | fix the layout at 64 or 44 columns instead of the default, which is the pane's own width |
+| `agentpane --width wide\|narrow` | fix the layout at 64 or 44 columns instead of the default, which is the pane's own width up to `max_width` |
 | `agentpane --accent auto\|2\|3\|4\|5\|6` | force the live-accent ANSI index instead of the auto-pick |
 | `agentpane --no-color` | disable all color (the `NO_COLOR` env var does the same) |
 | `agentpane --no-bell --no-badge --no-notify --no-links` | switch off individual side effects |
@@ -78,10 +79,10 @@ color = true              # false == NO_COLOR
 | `space` | pin/unpin this agent's history onto the tree - `⏎` inspects instead (no-op on decayed/queued) |
 | `⏎` | open the inspector; on the `RETURNED` header, toggle those rows; on the condensed screen's alert row, jump to the session pane instead |
 | click | select a row and open it (a click inside an already-open inspector keeps your scroll position) |
-| `⇥` | jump to the session pane - the only place a permission request can be answered |
+| `⇥` | jump to the session pane, the only place a permission request can be answered (needs a terminal from [TERMINALS.md](TERMINALS.md)) |
 | `esc` / `q` | close the inspector - never kills anything; `q` never quits the pane |
 | `f` | follow mode: inspector tracks the most recently active agent |
-| `o` | open the selected agent's current file in `$EDITOR` (new iTerm2 tab) |
+| `o` | open the selected agent's current file in `$EDITOR` in a new tab (see [TERMINALS.md](TERMINALS.md)) |
 | `y` | yank the agent's error, else its failing command, else its activity line; on `main`, the full workstream label |
 | `Y` | yank the whole inspector log; on `main` with an empty log, the full workstream label |
 | `w` | cycle the layout: fill the pane, wide 64, narrow 44 (persisted) |

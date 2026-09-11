@@ -3,6 +3,10 @@
 Goal: a window that opens with Claude Code in a large left pane and
 `agentpane` in a 64-column right pane, automatically, every time.
 
+iTerm2 is one of four terminals agentpane can split from a hook; tmux, WezTerm
+and kitty work too, and [TERMINALS.md](TERMINALS.md) covers those. This page is
+the full iTerm2 walkthrough.
+
 There are two routes:
 
 - **Autopane (recommended).** `agentpane install --autopane` adds a `SessionStart`

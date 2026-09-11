@@ -635,3 +635,69 @@ func TestAutopaneScriptEscapesHostileInput(t *testing.T) {
 		t.Errorf("the pane id literal reads %q, want the input back verbatim", got)
 	}
 }
+
+// The whole guard chain, all the way through the act, on a backend that is not
+// iTerm2. This is what proves auto-open is not macOS-only: the same fixture
+// that drives the AppleScript path drives tmux, with a fake tmux recording the
+// argv it was handed.
+func TestAutopaneTmuxSplit(t *testing.T) {
+	argv := setupAutopaneEnv(t)
+	// Leave iTerm2 detectable: tmux must win anyway (a session inside tmux
+	// inside iTerm2 lives in a tmux pane).
+	t.Setenv("TMUX", "/tmp/tmux-501/default,4242,0")
+	t.Setenv("TMUX_PANE", "%9")
+	t.Setenv("AGENTPANE_TMUX", strings.TrimSuffix(argv, "osascript-argv.txt")+"fake-osascript")
+	t.Setenv("AGENTPANE_COLUMNS", "72")
+
+	in := strings.NewReader(autopanePayloadJSON("SessionStart", "startup", autopaneTestSession))
+	if code := cmdAutopane(in, nil); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	raw, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatalf("tmux not invoked on the all-pass path: %v", err)
+	}
+	got := string(raw)
+	exe, _ := os.Executable()
+	for _, want := range []string{
+		"split-window",
+		"-d",                             // focus stays in the session pane
+		"-l",                             // ...at a width we chose
+		"72",                             // ...which is AGENTPANE_COLUMNS
+		"%9",                             // the session's own pane
+		exe,                              // the TUI, by absolute path
+		"--session", autopaneTestSession, // pinned to this session
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("tmux argv missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "iTerm2") {
+		t.Fatalf("an AppleScript reached tmux:\n%s", got)
+	}
+	if _, err := os.Stat(autopaneLockPath(autopaneTestSession)); err != nil {
+		t.Fatalf("lockfile not left in place: %v", err)
+	}
+}
+
+// A terminal agentpane cannot drive is a skip, not a failure, and nothing is
+// run at all.
+func TestAutopaneUnsupportedTerminal(t *testing.T) {
+	argv := setupAutopaneEnv(t)
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+	t.Setenv("ITERM_SESSION_ID", "")
+
+	var explain bytes.Buffer
+	in := strings.NewReader(autopanePayloadJSON("SessionStart", "startup", autopaneTestSession))
+	runAutopaneMode(in, nil, os.Getpid(), &explain, false)
+
+	if autopaneInvoked(argv) {
+		t.Fatal("something was run in a terminal with no split backend")
+	}
+	if !strings.Contains(explain.String(), "(c) no terminal to split") {
+		t.Fatalf("guard (c) did not report the reason:\n%s", explain.String())
+	}
+	if _, err := os.Stat(autopaneLockPath(autopaneTestSession)); err == nil {
+		t.Fatal("a skipped event took the lock")
+	}
+}

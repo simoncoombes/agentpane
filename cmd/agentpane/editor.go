@@ -3,19 +3,19 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 )
 
-// osascriptTimeout bounds every AppleScript call so a hung iTerm2 can never
-// wedge a background helper (the UI thread never waits on these at all).
-const osascriptTimeout = 5 * time.Second
+// paneCmdTimeout bounds every terminal-driving command — an AppleScript, a
+// tmux or wezterm CLI call — so a hung terminal can never wedge a background
+// helper. The UI thread never waits on these at all.
+const paneCmdTimeout = 5 * time.Second
 
 // openInEditor returns the `o` handler (§5.3): open the agent's current file
-// in $EDITOR in a NEW iTerm2 tab — never in the agentpane pane itself. The
-// work happens in a goroutine so the UI never blocks; failures degrade to
-// `open -a <editor>`, then `open <path>`, and are only ever logged.
+// in $EDITOR in a NEW tab — never in the agentpane pane itself. The work
+// happens in a goroutine so the UI never blocks; a terminal that cannot open
+// a tab degrades to the desktop opener, and failures are only ever logged.
 func openInEditor(configEditor string, dbg *debugLog) func(path string) error {
 	return func(path string) error {
 		if path == "" {
@@ -29,19 +29,17 @@ func openInEditor(configEditor string, dbg *debugLog) func(path string) error {
 			editor = "vi"
 		}
 		go func() {
-			if _, err := exec.LookPath("osascript"); err == nil {
-				script := iTermTabScript(editor, path)
-				if err := runOsascript(script); err == nil {
+			backend := currentBackend()
+			cmdline := "/bin/sh -c " + shellQuote(editor+" "+shellQuote(path))
+			if chain := tabCommands(backend, os.Getenv, cmdline); len(chain) > 0 {
+				if runPaneChain(chain, paneCmdTimeout) {
 					return
 				}
-				dbg.printf("o: iTerm2 tab failed, falling back to open -a")
+				dbg.printf("o: %s tab failed, falling back to the desktop opener", backend)
 			}
-			// Degraded path: hand the file to the editor app, then to the
-			// system default.
-			if err := runQuick("open", "-a", editor, path); err == nil {
-				return
-			}
-			if err := runQuick("open", path); err != nil {
+			// Degraded path: hand the file to the editor app, then to
+			// whatever the desktop uses.
+			if !runPaneChain(desktopOpenCommands(editor, path), paneCmdTimeout) {
 				dbg.printf("o: every open path failed for %s", path)
 			}
 		}()
@@ -49,54 +47,33 @@ func openInEditor(configEditor string, dbg *debugLog) func(path string) error {
 	}
 }
 
-// iTermTabScript builds the AppleScript for a new tab running the editor.
-func iTermTabScript(editor, path string) string {
-	cmd := editor + " " + shellQuote(path)
+// iTermTabScript builds the AppleScript for a new tab running cmdline, which
+// is already a complete `/bin/sh -c '…'` string.
+func iTermTabScript(cmdline string) string {
 	return `tell application "iTerm2"
 	tell current window
-		create tab with default profile command "` + appleScriptEscape("/bin/sh -c "+shellQuote(cmd)) + `"
+		create tab with default profile command "` + appleScriptEscape(cmdline) + `"
 	end tell
 end tell`
 }
 
-// focusLeftPane returns the ⏎-on-band handler (§5.3): jump focus to the
-// session pane via the iTerm2 AppleScript interface, fire-and-forget.
+// focusLeftPane returns the ⇥ handler (§5.3): jump focus to the session pane,
+// fire-and-forget, through whichever terminal backend this pane is running
+// under. A terminal agentpane cannot drive returns an error, which the key
+// turns into the "no focus jump" toast rather than silence.
 func focusLeftPane(dbg *debugLog) func() error {
 	return func() error {
-		if _, err := exec.LookPath("osascript"); err != nil {
-			return err
+		backend := currentBackend()
+		chain := focusCommands(backend, os.Getenv)
+		if len(chain) == 0 {
+			return fmt.Errorf("no focus jump for %s", backend)
 		}
 		go func() {
-			script := `tell application "iTerm2" to select first session of current tab of current window`
-			if err := runOsascript(script); err != nil {
-				dbg.printf("focus jump failed: %v", err)
+			if !runPaneChain(chain, paneCmdTimeout) {
+				dbg.printf("focus jump failed under %s", backend)
 			}
 		}()
 		return nil
-	}
-}
-
-// runOsascript executes one AppleScript with a hard timeout.
-func runOsascript(script string) error {
-	return runQuick("osascript", "-e", script)
-}
-
-// runQuick runs a command, reporting a timeout after osascriptTimeout. The
-// timed-out helper is abandoned, never killed — no code path anywhere may
-// signal a process (§5.3, PART 10) — and the Wait goroutine reaps it whenever
-// it eventually finishes.
-func runQuick(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(osascriptTimeout):
-		return fmt.Errorf("%s timed out", name)
 	}
 }
 
