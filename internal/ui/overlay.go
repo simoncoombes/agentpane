@@ -31,7 +31,7 @@ func renderOverlay(w state.World, v *UIState, cols, rows int, pal Palette) [][]s
 	add(key("⇞/⇟", "page the inspector when it's open"))
 	add(key("a", "returned agents: list at the foot ↔ rows on the tree"))
 	add(key("t", "right column: since ↔ token rate"))
-	add(key("w", "toggle wide 64 / narrow 44"))
+	add(key("w", "cycle fill / wide 64 / narrow 44"))
 	// 1–9 is listed only when it does something: the picker is withheld on a
 	// pinned pane and when there is a single candidate (sessionPicker).
 	if v.sessionPicker() {

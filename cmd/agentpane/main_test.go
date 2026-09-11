@@ -422,7 +422,7 @@ func TestApplyOverrides(t *testing.T) {
 			}
 		}},
 		{"width invalid warns", cliFlags{width: "huge"}, func(t *testing.T, c cfgLike, w int) {
-			if c.width != "wide" || w != 1 {
+			if c.width != "fill" || w != 1 {
 				t.Fatalf("got %q/%d", c.width, w)
 			}
 		}},
@@ -700,5 +700,36 @@ func TestDoctorSessionAware(t *testing.T) {
 	}
 	if code := run([]string{"doctor", "stray"}, &out, &errb); code != 2 {
 		t.Fatalf("doctor with a stray argument: exit %d, want 2", code)
+	}
+}
+
+// A prefs file written before fill existed must not pin an upgrading pane to
+// 64 columns. `w` was a two-way toggle then, and wide was the default, so a
+// stored "wide" mostly meant "back to normal".
+func TestMigratePrefsDropsTheOldDefault(t *testing.T) {
+	cases := []struct {
+		name string
+		in   uiPrefs
+		want string
+	}{
+		{"pre-fill wide is dropped", uiPrefs{Width: "wide", RightCol: "rate"}, ""},
+		{"pre-fill narrow is kept", uiPrefs{Width: "narrow"}, "narrow"},
+		{"nothing stored stays nothing", uiPrefs{}, ""},
+		{"wide chosen after the upgrade is kept",
+			uiPrefs{Schema: uiPrefsSchema, Width: "wide"}, "wide"},
+		{"fill is kept", uiPrefs{Schema: uiPrefsSchema, Width: "fill"}, "fill"},
+	}
+	for _, c := range cases {
+		got := migratePrefs(c.in)
+		if got.Width != c.want {
+			t.Errorf("%s: width = %q, want %q", c.name, got.Width, c.want)
+		}
+		if got.Schema != uiPrefsSchema {
+			t.Errorf("%s: schema = %d, want %d", c.name, got.Schema, uiPrefsSchema)
+		}
+	}
+	// The migration must not touch the other toggle.
+	if got := migratePrefs(uiPrefs{Width: "wide", RightCol: "since"}); got.RightCol != "since" {
+		t.Errorf("the right-column pref was lost: %q", got.RightCol)
 	}
 }

@@ -21,7 +21,7 @@ handful you need on day one.
 | `agentpane runs show <id>` | print one run summary |
 | `agentpane --oneline` | single-row status output for a tmux/iTerm2 status bar, then exit |
 | `agentpane --oneline --session <id>` | the same row for exactly one session's pane |
-| `agentpane --width narrow` | start in the 44-column layout (`wide` is the 64-column default) |
+| `agentpane --width wide\|narrow` | fix the layout at 64 or 44 columns instead of the default, which is the pane's own width |
 | `agentpane --accent auto\|2\|3\|4\|5\|6` | force the live-accent ANSI index instead of the auto-pick |
 | `agentpane --no-color` | disable all color (the `NO_COLOR` env var does the same) |
 | `agentpane --no-bell --no-badge --no-notify --no-links` | switch off individual side effects |
@@ -37,7 +37,8 @@ optional; these are the defaults. Invalid values warn once in the footer and
 fall back to the default, never exit.
 
 ```toml
-width = "wide"              # wide | narrow
+width = "fill"              # fill (the pane) | wide (64) | narrow (44)
+max_width = 100             # where fill stops; at least 44
 stuck_after = "45s"
 long_running_after = "3m"
 long_running_allow = ["test", "build", "install", "compile", "bundle", "migrate"]
@@ -83,7 +84,7 @@ color = true              # false == NO_COLOR
 | `o` | open the selected agent's current file in `$EDITOR` (new iTerm2 tab) |
 | `y` | yank the agent's error, else its failing command, else its activity line; on `main`, the full workstream label |
 | `Y` | yank the whole inspector log; on `main` with an empty log, the full workstream label |
-| `w` | toggle 64/44 layout (persisted) |
+| `w` | cycle the layout: fill the pane, wide 64, narrow 44 (persisted) |
 | `a` | returned agents: the list at the foot of the tree (default) ↔ full rows on it |
 | `1`-`9` | switch attached session (idle screen, only when unpinned and more than one session is live; no-op otherwise) |
 | `t` | cycle the right column: since-last-event, token burn rate (persisted) |

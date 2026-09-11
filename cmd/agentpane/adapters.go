@@ -178,8 +178,32 @@ func installedHookEvents() []string {
 // uiPrefs persists the w and t toggles under the state dir — never in the
 // user's config.toml, which agentpane treats as read-only.
 type uiPrefs struct {
+	Schema   int    `json:"schema"`
 	Width    string `json:"width"`
 	RightCol string `json:"right_col"`
+}
+
+// uiPrefsSchema is the current shape. Anything older goes through
+// migratePrefs on the way in.
+const uiPrefsSchema = 1
+
+// migratePrefs upgrades a prefs file written before fill existed.
+//
+// `w` used to be a two-way toggle between wide and narrow, and wide was the
+// default, so a stored "wide" is ambiguous: it almost always means "I toggled
+// back to normal", not "hold this pane at 64 columns however wide it gets".
+// Honouring it would leave everyone who had ever pressed `w` twice with a pane
+// that still refuses the room, and nothing on screen to explain why. It is
+// dropped once, and a deliberate "wide" chosen after the upgrade is written
+// with the current schema and kept from then on.
+//
+// A stored "narrow" says something the new default does not, so it survives.
+func migratePrefs(p uiPrefs) uiPrefs {
+	if p.Schema < uiPrefsSchema && p.Width == "wide" {
+		p.Width = ""
+	}
+	p.Schema = uiPrefsSchema
+	return p
 }
 
 func prefsPath() string {
@@ -197,7 +221,7 @@ func loadPrefs() uiPrefs {
 		return p
 	}
 	json.Unmarshal(data, &p) //nolint:errcheck // malformed prefs = defaults (C9)
-	return p
+	return migratePrefs(p)
 }
 
 func savePrefs(p uiPrefs) {

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattn/go-runewidth"
+
 	"github.com/simoncoombes/agentpane/internal/event"
 	"github.com/simoncoombes/agentpane/internal/state"
 )
@@ -239,5 +241,86 @@ func TestTreeTopIsInvariantAcrossScenes(t *testing.T) {
 				t.Errorf("rows=%d: tree top moved to y=%d (was %d) at %s", rows, got, want, name)
 			}
 		}
+	}
+}
+
+// The three §3.1 layouts: narrow and wide are fixed budgets, fill takes the
+// pane it is given and stops at fillMaxColumns.
+func TestFrameWidthModes(t *testing.T) {
+	cases := []struct {
+		mode string
+		max  int
+		cols int
+		want int
+	}{
+		{"narrow", 0, 120, 44},
+		{"narrow", 0, 30, 30},
+		{"wide", 0, 120, 64},
+		{"wide", 0, 50, 50},
+		{"fill", 100, 98, 98},
+		{"fill", 100, 200, 100},
+		{"fill", 100, 50, 50},
+		// Unset is fill, and an unset ceiling is the default one, so a pane
+		// that never configured anything is still responsive and still capped.
+		{"", 0, 200, fillMaxColumns},
+		{"", 0, 98, 98},
+		// max_width moves the ceiling in both directions.
+		{"fill", 140, 200, 140},
+		{"fill", 50, 200, 50},
+	}
+	for _, c := range cases {
+		v := &UIState{WidthMode: c.mode, MaxWidth: c.max}
+		if got := frameWidth(v, c.cols); got != c.want {
+			t.Errorf("frameWidth(%q, max %d, %d cols) = %d, want %d",
+				c.mode, c.max, c.cols, got, c.want)
+		}
+	}
+}
+
+// The pane is responsive with no configuration at all: the default config,
+// rendered into panes of different widths, draws to each one.
+func TestDefaultLayoutFollowsThePane(t *testing.T) {
+	m, events := demoMachine(t)
+	v, w := demoView(t, m, events)
+	if v.WidthMode != "fill" {
+		t.Fatalf("default width mode = %q, want fill", v.WidthMode)
+	}
+	for _, c := range []struct{ cols, want int }{{44, 44}, {64, 64}, {80, 80}, {110, 100}} {
+		out, _ := renderFrame(w, v, c.cols, 30, demoNow(), NewPalette(2, true))
+		max := 0
+		for _, ln := range strings.Split(stripANSI(out), "\n") {
+			if n := runewidth.StringWidth(ln); n > max {
+				max = n
+			}
+		}
+		if max != c.want {
+			t.Errorf("a %d-column pane drew %d columns, want %d", c.cols, max, c.want)
+		}
+	}
+}
+
+// A wider pane in fill mode must actually USE the columns: the same world
+// rendered at 96 columns has to reach further right than at 64.
+func TestFillModeWidensFrame(t *testing.T) {
+	m, events := demoMachine(t)
+	v, w := demoView(t, m, events)
+
+	widest := func(mode string) int {
+		v.WidthMode = mode
+		out, _ := renderFrame(w, v, 96, 30, demoNow(), NewPalette(2, true))
+		max := 0
+		for _, ln := range strings.Split(stripANSI(out), "\n") {
+			if n := runewidth.StringWidth(ln); n > max {
+				max = n
+			}
+		}
+		return max
+	}
+	if got := widest("fill"); got != 96 {
+		t.Fatalf("fill mode rendered %d columns at cols=96, want 96", got)
+	}
+	// The fixed budgets are still reachable, and still refuse the extra room.
+	if got := widest("wide"); got != 64 {
+		t.Errorf("wide mode rendered %d columns at cols=96, want 64", got)
 	}
 }

@@ -45,15 +45,49 @@ func renderFrame(w state.World, v *UIState, cols, rows int, now time.Time, pal P
 	return finishMeta(renderActive(w, v, width, rows, now, pal), width, rows)
 }
 
-// frameWidth is the rendered width for a pane of cols columns: the §3.1 wide-64
-// or narrow-44 budget, never the raw terminal width.
+// Column budgets for the three §3.1 layouts. wide-64 and narrow-44 are the
+// spec's; fill is the addition below.
+const (
+	narrowColumns = 44
+	wideColumns   = 64
+	// fillMaxColumns is where fill stops by default. A pane can be dragged to
+	// 200 columns, and a row of text that wide is not read, it is scanned
+	// twice, so fill takes the pane it is given up to a limit that keeps one
+	// row one eyeful. `max_width` in config.toml moves it.
+	fillMaxColumns = 100
+)
+
+// frameWidth is the rendered width for a pane of cols columns.
+//
+// fill is the default and needs no switching on: the pane draws at whatever
+// width it has been given, up to v.MaxWidth. Everything above 64 columns goes
+// to text, because the activity line, the tool-call labels and main's
+// workstream label are all budgeted against this number and simply stop being
+// truncated.
+//
+// wide and narrow are the FIXED budgets the tree was originally drawn
+// against, still reachable with `w`. They are a ceiling, never a floor, so
+// narrowing a pane below the budget reflows in every mode; only widening past
+// it is what they refuse.
 func frameWidth(v *UIState, cols int) int {
 	width := cols
-	if v.WidthMode == "narrow" && width > 44 {
-		return 44
-	}
-	if width > 64 {
-		return 64
+	switch v.WidthMode {
+	case "narrow":
+		if width > narrowColumns {
+			return narrowColumns
+		}
+	case "wide":
+		if width > wideColumns {
+			return wideColumns
+		}
+	default:
+		max := v.MaxWidth
+		if max < narrowColumns {
+			max = fillMaxColumns
+		}
+		if width > max {
+			return max
+		}
 	}
 	return width
 }

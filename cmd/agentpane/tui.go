@@ -33,7 +33,7 @@ func runTUI(fl cliFlags, stderr io.Writer) int {
 	applyOverrides(&cfg, fl, &warnings)
 
 	prefs := loadPrefs()
-	if fl.width == "" && (prefs.Width == "wide" || prefs.Width == "narrow") {
+	if fl.width == "" && (prefs.Width == "wide" || prefs.Width == "narrow" || prefs.Width == "fill") {
 		cfg.Width = prefs.Width // §5.1: the w toggle is persisted
 	}
 
