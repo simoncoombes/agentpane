@@ -1,0 +1,44 @@
+AGENTS 7[90m · 3f9c[0m[32m  ▇·····[0m[90m 1/7[0m                        [1m⚑ 2 NEEDS YOU[0m
+[90m────────────────────────────────────────────────────────────────[0m
+[1m◍[0m main[90m  Build agentpane — live TUI monitor for Claude Code…[0m 112k
+[90m│ [0mholding 2 agents · waiting on you                           [90m5s[0m
+[90m├─╮[0m
+[7m│ ╰[0m[1;7m⚑[0m[1;7m fix-ts2345-fallout[0m[7m  ↺2[0m[7m                            [0m[1;7m▇▇▇▇·[0m[1;7m 52s[0m
+[90m│    [0m[90mFix the TS2345 fallout in api handlers[0m
+[90m│    [0m[32m▸ [0m[1mblocked · asked to clear the TS cache[0m           ▪▪▫·  44k
+[90m├─╮[0m
+[90m│ ╰[0m[1m⚑[0m[1m typecheck-works…[0m                                      [1m2m50s[0m
+[90m│    [0m[32m▸ [0m[1mno call open · silent 2m50s[0m                     ▪▪▫·  33k
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m run-auth-tests                              [32m◐ in Bash[0m[32m 3m12s[0m
+[90m│    [0m[32m▸ [0mBash pnpm test --watch                          ▪▫··  38k
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m audit-users-schema                                   0.1k/s
+[90m│    [0m[32m▸ [0mGrep "createUser" src/**                        ▪▪▫·  52k
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m write-email-index                                    0.3k/s
+[90m│    [0m[32m▸ [0mEdit 0042.sql                                   ▪▪▫·  86k
+[90m├─╮[0m
+[90m│ ╰[0m[90m○[0m[90m document-constr…[0m[90m  queued[0m                                   
+[90m╰─╮[0m
+[90m  ╰[0m[90m◇[0m[90m reviewer[0m[90m  limited telemetry[0m                                
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+RETURNED 1
+[90m────────────────────────────────────────────────────────────────[0m
+[32m  lint-and-format[0m                                      [90m3:56[0m  47k
+[90m────────────────────────────────────────────────────────────────[0m
+[2;90m⇥ jump to the session pane to answer[0m                [2;90mtoken rate →[0m

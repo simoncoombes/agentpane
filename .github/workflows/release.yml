@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The suite is the gate on a release, not a thing that ran once on main.
+      - name: Test
+        run: go test ./...
+
+      # Cross-compiled from one runner: the binary is pure Go with no cgo, so
+      # a darwin build from Linux is the same binary a Mac would produce.
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            echo "building $os/$arch"
+            GOOS="$os" GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.Version=${version}" \
+              -o "dist/agentpane" ./cmd/agentpane
+            tar -czf "dist/agentpane_${version}_${os}_${arch}.tar.gz" \
+              -C dist agentpane \
+              -C "$GITHUB_WORKSPACE" LICENSE README.md
+            rm dist/agentpane
+          done
+          cd dist && sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
+
+      # gh is on the runner already: no third-party action gets a token.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*.tar.gz dist/checksums.txt

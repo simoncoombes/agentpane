@@ -1,0 +1,403 @@
+// Package state implements the agentpane domain state machine (SPEC rev 3.1
+// PART 2): it consumes event.Event values, derives the events the platform
+// cannot emit, and exposes an ordered, copy-safe snapshot for the UI.
+package state
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/simoncoombes/agentpane/internal/event"
+)
+
+// Status is the complete agent status set (§2.3). There is no failed and no
+// killed: the platform emits neither signal.
+type Status uint8
+
+const (
+	StatusQueued Status = iota
+	StatusRun
+	StatusAsk
+	StatusStuck
+	StatusDone
+	StatusTeammate
+	StatusUnknown
+)
+
+func (s Status) String() string {
+	switch s {
+	case StatusQueued:
+		return "queued"
+	case StatusRun:
+		return "run"
+	case StatusAsk:
+		return "ask"
+	case StatusStuck:
+		return "stuck"
+	case StatusDone:
+		return "done"
+	case StatusTeammate:
+		return "teammate"
+	default:
+		return "unknown"
+	}
+}
+
+// Rank is the §3.6 render order: ask, stuck, run, queued, done, teammate,
+// unknown.
+func (s Status) Rank() int {
+	switch s {
+	case StatusAsk:
+		return 0
+	case StatusStuck:
+		return 1
+	case StatusRun:
+		return 2
+	case StatusQueued:
+		return 3
+	case StatusDone:
+		return 4
+	case StatusTeammate:
+		return 5
+	default:
+		return 6
+	}
+}
+
+func (s Status) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
+func (s *Status) UnmarshalJSON(b []byte) error {
+	var v string
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch v {
+	case "queued":
+		*s = StatusQueued
+	case "run":
+		*s = StatusRun
+	case "ask":
+		*s = StatusAsk
+	case "stuck":
+		*s = StatusStuck
+	case "done":
+		*s = StatusDone
+	case "teammate":
+		*s = StatusTeammate
+	default:
+		*s = StatusUnknown
+	}
+	return nil
+}
+
+// SessionState is the session lifecycle for the header (§2.10, §3.9).
+type SessionState uint8
+
+const (
+	SessionActive SessionState = iota
+	SessionIdle
+	SessionEnded
+	SessionCompacting
+)
+
+func (s SessionState) String() string {
+	switch s {
+	case SessionActive:
+		return "active"
+	case SessionIdle:
+		return "idle"
+	case SessionEnded:
+		return "ended"
+	default:
+		return "compacting"
+	}
+}
+
+// World is the machine's snapshot for the UI. Every slice and pointer is a
+// copy: mutating a World never touches machine state.
+type World struct {
+	Session Session
+	Main    Main
+	// Agents is already in §3.6 render order (ask, stuck, run, queued,
+	// done, teammate, unknown; stable by spawn order within each group).
+	// Folded retry ghosts never appear here (§3.7.7), and neither do agents
+	// that have earned no row (Quiet).
+	Agents []Agent
+	// Quiet lists the agents the platform announced but never showed doing
+	// anything: no name or description, no tool call, no tokens, no file, no
+	// message — see Machine.quiet. Claude Code emits SubagentStart/Stop pairs
+	// for entities that do no work and write no transcript (a 5-subagent
+	// session was observed producing 40 of them), and rendering a row each was
+	// technically honest and practically useless. They stay in the model and
+	// are counted here so the UI can say how many exist and name them on
+	// demand: suppressed, never silently dropped (§1.5, §3.9).
+	Quiet []QuietAgent
+	// Asks are the deduped alert-band entries, oldest first (§3.7).
+	Asks        []Ask
+	Contentions []Contention
+	// Run is the active run aggregate, nil when no run is in flight.
+	Run *Run
+	// LastRun is the most recently completed run (persistence is
+	// internal/runstore's job).
+	LastRun       *Run
+	Connected     bool
+	DroppedEvents int
+	// Rev increases on every visible state change; the UI diffs per-agent
+	// Rev against it for the away-digest change marks (§3.19).
+	Rev uint64
+}
+
+type Session struct {
+	ID string
+	// ShortID is the attached short id shown in the header (§3.8a).
+	ShortID string
+	State   SessionState
+}
+
+// Main is the root agent. It has a real todo list instead of pips (§2.2);
+// when Todo is empty the UI falls back to Activity, never fake pips.
+type Main struct {
+	// Title is Claude Code's own short session title (event.SessionTitled,
+	// transcript-only). It is the workstream label on main's row — the UI
+	// prefers it over the raw run prompt, which is whole sentences long.
+	// Empty until a title line is seen; agentpane never invents one.
+	Title    string
+	Todo     string
+	Activity string
+	// Model and Effort are what the session is running on, verbatim from the
+	// transcript ("claude-opus-5", "high"). Empty without transcript access.
+	Model       string
+	Effort      string
+	Tokens      int
+	LastEventAt time.Time
+	Rev         uint64
+}
+
+// Agent is one subagent row (§2.9, rev 3.1).
+type Agent struct {
+	ID   string
+	Name string // the spawn description; the UI slugs it (§3.16)
+	// NameExact marks Name as coming from an exact id↔description join rather
+	// than a hooks correlation, so the UI may replace a guessed slug with it.
+	NameExact bool
+	Type      string // subagent_type
+	// Model and Effort are what THIS agent is running on (event.ModelObserved,
+	// transcript-only). A subagent spawned onto a different model than the
+	// session is the case worth seeing; empty means the pane was never told.
+	Model    string
+	Effort   string
+	Teammate bool
+	Status   Status
+	// Station is the highest observed station, monotonic (§2.2):
+	// 0 spawn, 1 first tool, 2 first edit, 3 return.
+	Station int
+	Retries int // inferred (§2.3): dim ↺n, never a status
+	// Verify is the inferred test/build/lint marker (§2.2), split on the exit
+	// code (§13.3 Q6): VerifyOK on a zero exit, VerifyFailed on a non-zero one,
+	// VerifyNone while nothing has completed. Never a pip — stations mean
+	// "observed fact" and an inference may not sit among them.
+	Verify VerifyState
+	// Verified answers the yes/no half of the same question: the check passed.
+	Verified bool
+	// Decayed marks a done agent past decay_after (§3.5): display
+	// collapse only, not a status.
+	Decayed    bool
+	SpawnIndex int
+	SpawnedAt  time.Time
+	// LastEventAt drives the liveness clock (§2.6).
+	LastEventAt   time.Time
+	DoneAt        time.Time // zero until done
+	Tokens        int
+	LinesAdd      int
+	LinesDel      int
+	CurrentTool   string
+	CurrentTarget string
+	ActivityLine  string
+	// RawActivityLine is ActivityLine before ingest flattening, set only when
+	// the two differ (§13.1: `y` yanks the original bytes). Read it through
+	// ActivityRaw.
+	RawActivityLine string
+	OpenFile        string // last Read/Edit target
+	LastError       string
+	// LastMessage is the agent's final platform text; the UI may colour it
+	// but never adds a verdict (§2.3).
+	LastMessage string
+	// OpenCall is non-nil while a tool call is open: the UI renders
+	// "◐ in <Tool>" + time in call instead of a sparkline (§2.6a).
+	OpenCall *OpenCall
+	// CallHistory holds the newest calls, oldest first, capped at 20
+	// (§3.17); TotalCalls counts every recorded call for "+n more".
+	CallHistory []Call
+	TotalCalls  int
+	// SparkBuckets are 60 one-second buckets ending at SparkAt, holding
+	// both metrics so spark can switch without losing history (§2.9,
+	// §3.4). Index 59 is the SparkAt second.
+	SparkBuckets [60]SparkBucket
+	SparkAt      time.Time
+	// HistoryBuckets is the LIFETIME activity series §13.3 Q1 asks for: equal
+	// buckets of HistoryStep each, oldest first, the first starting at
+	// HistoryFrom, counting the same tokens and calls as SparkBuckets. It spans
+	// spawn→now (spawn→done once settled) and does not roll, so the inspector's
+	// history chart covers the run rather than the trailing minute.
+	//
+	// HistoryStep is DERIVED, not fixed. The series is bounded at histCap
+	// buckets and halves its own resolution when it fills (10s → 20s → 40s …),
+	// which is what lets it cover an arbitrarily long run in constant memory.
+	// Anything drawing it must read the step off this field and say what it is —
+	// a chart labelled 10s/bar that is actually 40s/bar is a quiet lie about the
+	// horizon (C8), which is the whole failure the rolling window had.
+	//
+	// Empty with a zero HistoryFrom means no activity has ever been bucketed for
+	// this agent: an honest absence, not a measured flatline.
+	HistoryBuckets []SparkBucket
+	HistoryFrom    time.Time
+	HistoryStep    time.Duration
+	EditedFiles    []string
+	// Ask is a copy of the pending permission payload, nil when not
+	// asking.
+	Ask *event.AskPayload
+	// Rev is the machine revision when this agent last changed (§3.19).
+	Rev uint64
+}
+
+// QuietAgent is one suppressed row's honest residue: everything that is
+// actually known about an agent that showed nothing. Type is its agent_type
+// when the platform reported one; there is no name, by definition.
+type QuietAgent struct {
+	ID     string
+	Type   string
+	Status Status
+}
+
+// VerifyState is the inferred verification marker (§13.3 Q6). Intent is not
+// evidence: only a check that ran to a known exit code moves it off None.
+type VerifyState uint8
+
+const (
+	// VerifyNone: no verification has completed. A verify command still open
+	// stays here — the row says nothing until there is an outcome.
+	VerifyNone VerifyState = iota
+	VerifyOK
+	VerifyFailed
+)
+
+func (v VerifyState) String() string {
+	switch v {
+	case VerifyOK:
+		return "verified"
+	case VerifyFailed:
+		return "verify failed"
+	default:
+		return "none"
+	}
+}
+
+// ActivityRaw is the activity line as the tool wrote it: the pre-flatten bytes
+// when they differ, the rendered line otherwise. Yanks use this.
+func (a Agent) ActivityRaw() string {
+	if a.RawActivityLine != "" {
+		return a.RawActivityLine
+	}
+	return a.ActivityLine
+}
+
+// OpenCall is the §2.6a open-call state.
+type OpenCall struct {
+	Tool string
+	// Target is flattened for display; RawTarget holds the exact command when
+	// the two differ (§13.1).
+	Target    string
+	RawTarget string
+	Since     time.Time
+}
+
+// TargetRaw is the exact command this call is running.
+func (o OpenCall) TargetRaw() string {
+	if o.RawTarget != "" {
+		return o.RawTarget
+	}
+	return o.Target
+}
+
+// Call is one glyph-ready call-history entry (§3.3 lines 4-7).
+type Call struct {
+	Tool string
+	// Target is flattened for display; RawTarget holds the exact command when
+	// the two differ (§13.1). `y` yanks TargetRaw, never Target.
+	Target    string
+	RawTarget string
+	// Says is the tool's own one-line description of the call — the Bash
+	// tool's `description` input, which the model writes and the platform
+	// carries on both hook events. "Find test directories" is what a reader
+	// wants from a history line; the 90-column `find` invocation behind it is
+	// what `y` is for.
+	Says string
+	Err  bool
+	Meta string // e.g. "+29 −4", "err", "exit 2"
+	At   time.Time
+}
+
+// TargetRaw is the exact text this call ran.
+func (c Call) TargetRaw() string {
+	if c.RawTarget != "" {
+		return c.RawTarget
+	}
+	return c.Target
+}
+
+// SparkBucket holds both sparkline metrics for one second (§3.4).
+type SparkBucket struct {
+	Tokens int
+	Calls  int
+}
+
+// Ask is one deduped alert-band entry (§3.7).
+type Ask struct {
+	Key         string // tool + normalised input, the dedupe key (§3.7.7)
+	AgentID     string // the original asker
+	Description string // slug source (the asker's description)
+	Tool        string
+	Command     string // the exact command, unnormalised (§3.7.1)
+	Kind        string // ask payload kind: command|file_write|network|mcp|other
+	RaisedAt    time.Time
+	// DupeCount is the total PermissionRequested events matched to this
+	// ask ("×n"), starting at 1.
+	DupeCount int
+	// FoldedGhosts counts distinct retry agents folded into this entry.
+	FoldedGhosts int
+	// Resolving means a resolution signal was seen but no outcome
+	// confirmed yet (§3.7.8): render "resolving…", never a verdict.
+	Resolving bool
+}
+
+// Contention is one §2.7 row. Newest first in World.Contentions.
+type Contention struct {
+	Path       string
+	AgentIDs   []string
+	AgentNames []string
+	DetectedAt time.Time
+}
+
+// Run is the §2.8 aggregate. It is attached as JSON to the RunEnded derived
+// event's Detail and exposed as World.LastRun; internal/runstore owns disk.
+type Run struct {
+	ID          string     `json:"id"`
+	SessionID   string     `json:"session_id"`
+	StartedAt   time.Time  `json:"started_at"`
+	EndedAt     time.Time  `json:"ended_at"`
+	Prompt      string     `json:"prompt,omitempty"`
+	Agents      []RunAgent `json:"agents"`
+	Tokens      int        `json:"tokens"`
+	Stalls      int        `json:"stalls"`
+	Contentions int        `json:"contentions"`
+}
+
+type RunAgent struct {
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	Status   Status        `json:"status"`
+	Duration time.Duration `json:"duration"`
+	Tokens   int           `json:"tokens"`
+}

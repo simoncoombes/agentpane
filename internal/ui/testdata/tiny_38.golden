@@ -1,0 +1,15 @@
+AGENTS 8[90m ✓1[0m                         [1m⚑2[0m
+[32m◍[0m main                              [2;90m5s[0m
+[1;7m⚑[0m[1;7m fix-ts2345-fallout[0m[7m               [0m[1;7m52s[0m
+[1m⚑[0m[1m typecheck-works…[0m               [1m2m50s[0m
+[32m●[0m run-auth-tests                    [2;90m5s[0m
+[32m●[0m audit-users-schema                [2;90m3s[0m
+[32m●[0m write-email-index                 [2;90m8s[0m
+[90m○[0m[90m document-constr…[0m                    
+[90m◇[0m[90m reviewer[0m                            
+[2;90mwiden for detail[0m
+
+
+
+
+

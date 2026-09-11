@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # The pane targets iTerm2 on macOS, but nothing under test touches a
+    # terminal: the render core is a pure function and every source reads
+    # files. Both runners prove that.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # -race because the sources are goroutines feeding a channel the UI
+      # drains, which is exactly the shape a race detector is for.
+      - name: go test
+        run: go test -race ./...
+
+      # install.sh edits the user's ~/.claude/settings.json. Its fixture
+      # harness never touches a real HOME, and it is the only guard on that
+      # file, so it runs on every push.
+      - name: install.sh fixtures
+        run: /bin/bash tests/install_test.sh
+
+      # get.sh is what a `curl | sh` install runs. It is tested against a fake
+      # release served over file://, so the download, the checksum check and
+      # the refusal path all run without a network or a published tag.
+      - name: get.sh fixtures
+        run: /bin/sh tests/get_test.sh
+
+      # The demo scaffold is only run by hand, before a recording, which is
+      # exactly the kind of script that rots unnoticed. One run is enough to
+      # catch that.
+      - name: demo scaffold
+        run: |
+          sh tools/make-demo-project.sh "${RUNNER_TEMP}/demo-project" >/dev/null
+          test -f "${RUNNER_TEMP}/demo-project/src/core/engine.py"
+          sh tools/make-demo-project.sh "${RUNNER_TEMP}/demo-project" >/dev/null
+          if sh tools/make-demo-project.sh "${RUNNER_TEMP}" 2>/dev/null; then
+            echo "the scaffold overwrote a directory it did not create"; exit 1
+          fi

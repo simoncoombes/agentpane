@@ -1,0 +1,30 @@
+AGENTS 32[32m  ▇·····[0m[90m 8/40[0m                           [90m4:00 · 100k tok[0m
+[90m────────────────────────────────────────────────────────────────[0m
+[32m◍[0m main[90m  big refactor[0m                                         12k
+[90m│ [0mholding 8 agents                                            [90m6s[0m
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m port-number-10                                           1s
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m port-number-13                                           4s
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m port-number-14                                           5s
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m port-number-15                                           6s
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m port-number-18                                           0s
+[90m├─╮[0m
+[90m│ ╰[0m[32m●[0m port-number-19                                           1s
+[90m├─╮[0m
+[7m│ ╰[0m[7m●[0m[7m port-number-20[0m[7m                                           [0m[7m2s[0m
+[90m│    [0m[90mPort the number 20 routes[0m
+
+RETURNED 8
+[90m────────────────────────────────────────────────────────────────[0m
+[32m  port-number-2 [0m                                        [90m2:50[0m  3k
+[32m  port-number-7 [0m                                        [90m2:50[0m  8k
+[32m  port-number-12[0m                                       [90m2:50[0m  13k
+[32m  port-number-17[0m                                       [90m2:50[0m  18k
+[32m  port-number-22[0m                                       [90m2:50[0m  23k
+[2;90m  +3 more[0m
+[90m────────────────────────────────────────────────────────────────[0m
+[2;90mj/k move · ⏎ open · a returned · ? keys[0m                [90m7–13 / 32[0m
