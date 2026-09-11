@@ -305,8 +305,9 @@ func TestIdleShowsOnlyTheLastRun(t *testing.T) {
 	}
 }
 
-// Every agent is one line of what it is DOING — not a name, and not a strip of
-// what it has already done. The block is the branch, the row, and the activity.
+// Every agent block ENDS on a line of what it is DOING — not on a name, and
+// not on the strip of what it has already done. The strip's height varies with
+// the room the pane has; the last line does not.
 func TestEveryAgentShowsWhatItIsDoing(t *testing.T) {
 	now := demoNow()
 	m, events := demoMachine(t)
@@ -328,12 +329,12 @@ func TestEveryAgentShowsWhatItIsDoing(t *testing.T) {
 				block = append(block, lines[i])
 			}
 		}
-		if len(block) != 3 {
-			t.Errorf("agent %q got %d lines, want branch + row + activity:\n%s",
+		if len(block) < 3 {
+			t.Errorf("agent %q got %d lines, want at least branch + row + activity:\n%s",
 				v.slugFor(a), len(block), strings.Join(block, "\n"))
 			continue
 		}
-		if !strings.Contains(block[2], nowMark+" ") {
+		if !strings.Contains(block[len(block)-1], nowMark+" ") {
 			t.Errorf("agent %q does not end on its activity line:\n%s",
 				v.slugFor(a), strings.Join(block, "\n"))
 		}

@@ -54,14 +54,24 @@ That is the whole row, for every agent. A tree's job is to say what everything
 is doing at once, and eight agents saying it now fit in the rows that used to
 hold three.
 
-**The history is a drill-in.** `⏎` or a click opens the inspector, which holds
-that agent's whole log — every tool call, its output, its errors — not the last
-two lines of it. Rows the tree spends on history are rows it cannot spend on
-agents, and history is a question you ask about one agent at a time.
+**History fills the rows nothing else wants.** When the tree has room to spare,
+every agent grows a strip of its recent tool calls above its activity line, one
+call at a time, up to `max_calls_shown`. One agent working alone in a tall pane
+is the case this exists for: it used to draw three lines and leave thirty blank.
 
-If you do want a row's history on the tree, `space` pins it open: an explicit,
-per-row choice, showing up to `max_calls_shown` calls above the activity line,
-newest at the bottom, with `+n more` for what was cut.
+The strip is the first thing given back. As agents arrive it shrinks for
+everybody at once, so no row is singled out, and it reaches zero before any row
+loses the line saying what it is doing. Growth also stops three rows short of
+the bottom, so the next agent to spawn has somewhere to land without collapsing
+every strip on the frame it appears.
+
+`space` pins a row's strip open regardless: an explicit per-row choice that
+survives the pressure the shared strip gives way to. Either way the strip shows
+up to `max_calls_shown` calls, newest at the bottom, with `+n more` for what was
+cut.
+
+For the whole log rather than the last few calls, `⏎` or a click opens the
+inspector: every tool call, its output and its errors, for one agent at a time.
 
 A history line says **what the call did**, not how it was spelled. When the tool
 wrote a description of its own - the Bash tool's `description`, the same text
