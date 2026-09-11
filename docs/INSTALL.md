@@ -70,14 +70,18 @@ Prefer to do it by hand? The exact snippet is in
 [The hook snippet](#the-hook-snippet) below, and `agentpane doctor` prints it
 too when the hooks are absent.
 
-## Auto-open (iTerm2)
+## Auto-open
 
 `agentpane install --autopane` adds one extra `SessionStart` hook group (matcher
 `startup|resume`) running `agentpane autopane`. From then on, starting an
-interactive Claude Code session in an iTerm2 pane automatically splits that
-pane vertically and runs the agentpane TUI in the new pane — no arrangement,
-no manual split. This is the recommended iTerm2 setup; see
-[ITERM2.md](ITERM2.md) for the full walkthrough.
+interactive Claude Code session splits the pane it started in and runs the
+agentpane TUI in the new pane, with no arrangement to restore and no manual
+split.
+
+This works in iTerm2, tmux, WezTerm and kitty. [TERMINALS.md](TERMINALS.md)
+covers what each one needs and how the terminal is detected;
+[ITERM2.md](ITERM2.md) is the longer iTerm2 walkthrough, including the
+profiles and the no-hooks alternative.
 
 `agentpane autopane` is silent and exits 0 on every path. It opens a pane
 only when ALL of these hold, and skips silently otherwise:
@@ -86,9 +90,10 @@ only when ALL of these hold, and skips silently otherwise:
   (`clear`/`compact`/`fork` re-fire mid-session and never open panes);
 - `AGENTPANE_AUTOPANE` is not `"0"` — the kill switch: `export
   AGENTPANE_AUTOPANE=0` disables auto-open without uninstalling;
-- the session runs in an iTerm2 pane (`TERM_PROGRAM` is `iTerm.app` and
-  `ITERM_SESSION_ID` is set — that id is how the split targets the exact
-  pane the session lives in, even if you have focused another window);
+- the session runs in a terminal agentpane can split, and one that names the
+  pane it is in: iTerm2, tmux, WezTerm or kitty. See
+  [TERMINALS.md](TERMINALS.md) for the environment variables each is detected
+  by, and for `AGENTPANE_TERMINAL`, which overrides the detection;
 - the session is not nested inside another Claude session
   (`CLAUDE_CODE_CHILD_SESSION` unset);
 - the `claude` process has a controlling terminal (a fully headless run —
@@ -99,9 +104,16 @@ only when ALL of these hold, and skips silently otherwise:
 - a per-session lockfile wasn't just taken by a duplicate event (stale locks
   older than 1h are reclaimed).
 
-The new pane uses the iTerm2 profile named by `AGENTPANE_PROFILE` (default
-`AgentPane`, the one docs/ITERM2.md ships via Dynamic Profiles) and falls
-back to the current session's own profile when it does not exist.
+The new pane is `AGENTPANE_COLUMNS` wide (default 64, floored at 44, and never
+so wide that the session pane drops below 80). On iTerm2 it uses the profile
+named by `AGENTPANE_PROFILE` (default `AgentPane`, the one docs/ITERM2.md ships
+via Dynamic Profiles) and falls back to the current session's own profile when
+that one does not exist.
+
+When nothing happens, `agentpane autopane --explain` runs the same guard chain
+against your current environment and prints a verdict per guard, opening
+nothing. To see the same trace from a real hook firing, run `agentpane autopane
+--debug-on` and read `~/.local/state/agentpane/autopane.log`.
 
 **Autopane panes are pinned.** The pane runs `agentpane --session <id>` by
 absolute binary path, with the session id from the SessionStart payload, so

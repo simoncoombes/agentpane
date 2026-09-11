@@ -51,12 +51,12 @@ import (
 )
 
 const (
-	// autopaneOsascriptTimeout bounds the osascript call. On expiry the
-	// helper is ABANDONED, never killed — no code path may signal a process
-	// (same pattern as editor.go's runQuick post-fix); whatever survives is
-	// reaped by the harness's hook-tree cleanup, which is fine because the
-	// pane iTerm2 already created belongs to iTerm2.
-	autopaneOsascriptTimeout = 3 * time.Second
+	// autopaneSplitTimeout bounds the command that does the splitting. On
+	// expiry the helper is ABANDONED, never killed — no code path may signal a
+	// process — and whatever survives is reaped by the harness's hook-tree
+	// cleanup, which is fine because the pane the terminal already created
+	// belongs to the terminal, not to this hook's process tree.
+	autopaneSplitTimeout = 3 * time.Second
 
 	// autopaneLockStale is the age past which a leftover lockfile is
 	// reclaimed (a crash between lock and split, or a very old session id
@@ -244,23 +244,15 @@ func runAutopaneMode(stdin io.Reader, extraArgs []string, ppid int, explain io.W
 	}
 	autopanePass(explain, "(b) kill switch: not set")
 
-	// (c) the session must live in an iTerm2 pane we can target.
-	// ITERM_SESSION_ID carries "wNtNpN:<uuid>"; the AppleScript matches the
-	// uuid against `id of session`, so strip through the last ":" — the same
-	// technique as it2-pane-hook.sh's `${ITERM_SESSION_ID##*:}`.
-	if os.Getenv("TERM_PROGRAM") != "iTerm.app" {
-		autopaneSkip(explain, "(c) TERM_PROGRAM=%q — auto-open needs iTerm.app (the split is an iTerm2 AppleScript)", os.Getenv("TERM_PROGRAM"))
+	// (c) the session must live in a terminal agentpane knows how to split.
+	// pane.go decides which, and why — a multiplexer beats the terminal
+	// hosting it, and AGENTPANE_TERMINAL overrides both.
+	backend := detectBackend(os.Getenv)
+	if backend == backendNone {
+		autopaneSkip(explain, "(c) no terminal to split: %s", backendReason(os.Getenv))
 		return
 	}
-	paneUUID := os.Getenv("ITERM_SESSION_ID")
-	if i := strings.LastIndex(paneUUID, ":"); i >= 0 {
-		paneUUID = paneUUID[i+1:]
-	}
-	if paneUUID == "" {
-		autopaneSkip(explain, "(c) ITERM_SESSION_ID empty — no pane to target")
-		return
-	}
-	autopanePass(explain, "(c) iTerm2 pane: %s", paneUUID)
+	autopanePass(explain, "(c) terminal: %s", backend)
 
 	// (d) nested Claude session: an interactive session spawned from inside
 	// another Claude session inherits CLAUDE_CODE_CHILD_SESSION
@@ -336,26 +328,45 @@ func runAutopaneMode(stdin io.Reader, extraArgs []string, ppid int, explain io.W
 		return
 	}
 	cmdline := paneCommand(exe, p.SessionID, extraArgs)
-	script := autopaneScript(paneUUID, autopaneProfile(), cmdline)
-	osascript := os.Getenv("AGENTPANE_OSASCRIPT")
-	if osascript == "" {
-		osascript = "osascript"
-	}
-	if dry {
-		fmt.Fprintf(explain, "\nWOULD OPEN a pane: profile %q running %s\n", autopaneProfile(), cmdline)
-		fmt.Fprintf(explain, "via %s -e <AppleScript targeting session %s>\n", osascript, paneUUID)
-		if _, err := exec.LookPath(osascript); err != nil {
-			fmt.Fprintf(explain, "SKIP  act: %s not found on PATH: %v\n", osascript, err)
+	chain := splitCommands(backend, os.Getenv, cmdline, autopaneColumns())
+	if len(chain) == 0 {
+		autopaneSkip(explain, "act: the %s backend has no pane to target from here", backend)
+		if !dry {
+			os.Remove(lock) //nolint:errcheck // best-effort release, stay silent
 		}
 		return
 	}
-	autopanePass(explain, "act: running %s to split pane %s (profile %q)", osascript, paneUUID, autopaneProfile())
-	if !runAbandoning(osascript, autopaneOsascriptTimeout, "-e", script) {
-		autopaneSkip(explain, "act: %s failed to start — lock released", osascript)
+	if dry {
+		fmt.Fprintf(explain, "\nWOULD OPEN a %s pane %d columns wide, running %s\n",
+			backend, autopaneColumns(), cmdline)
+		for _, c := range chain {
+			fmt.Fprintf(explain, "via %s\n", summariseArgv(c.argv))
+			if _, err := exec.LookPath(c.argv[0]); err != nil {
+				fmt.Fprintf(explain, "SKIP  act: %s not found on PATH: %v\n", c.argv[0], err)
+			}
+		}
+		return
+	}
+	autopanePass(explain, "act: splitting via %s (%s)", backend, summariseArgv(chain[0].argv))
+	if !runPaneChain(chain, autopaneSplitTimeout) {
+		autopaneSkip(explain, "act: every %s split command failed — lock released", backend)
 		os.Remove(lock) //nolint:errcheck // best-effort release, stay silent
 	} else {
-		autopanePass(explain, "act: osascript started — pane should appear")
+		autopanePass(explain, "act: split issued — pane should appear")
 	}
+}
+
+// summariseArgv renders a command for the --explain trace without pasting a
+// forty-line AppleScript into it.
+func summariseArgv(argv []string) string {
+	out := make([]string, 0, len(argv))
+	for _, a := range argv {
+		if len(a) > 60 || strings.Contains(a, "\n") {
+			a = "<" + strconv.Itoa(len(a)) + " bytes of script>"
+		}
+		out = append(out, a)
+	}
+	return strings.Join(out, " ")
 }
 
 // socketState is the guard-(f) probe result for the per-session TUI socket.
@@ -551,29 +562,6 @@ func autopaneLockReclaim(path string, now time.Time) bool {
 	}
 	os.Remove(graveyard) //nolint:errcheck // best-effort cleanup
 	return autopaneLockCreate(path)
-}
-
-// runAbandoning starts name and waits at most timeout, reporting whether the
-// process STARTED (false only when exec itself failed — binary missing, not
-// executable). On expiry the process is abandoned WITHOUT being killed — no
-// code path anywhere may signal a process (§5.3, PART 10) — and the Wait
-// goroutine reaps it whenever it eventually finishes. stdout/stderr stay nil
-// (silent on every path).
-func runAbandoning(name string, timeout time.Duration, args ...string) bool {
-	cmd := exec.Command(name, args...)
-	if err := cmd.Start(); err != nil {
-		return false
-	}
-	done := make(chan struct{})
-	go func() {
-		cmd.Wait() //nolint:errcheck // silent: outcome does not matter
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-	}
-	return true
 }
 
 // autopaneDebugPath is the trace log written when the debug marker exists.

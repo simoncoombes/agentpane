@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -275,10 +276,44 @@ func doctorReport(w io.Writer, session string) int {
 	fmt.Fprintln(w, "  ● ⚑ ○ ◇ ◌ ◍ ✔ ✖ ⚠ ▪▫· ▇ ▣ ▌ ▏ █ ◐ ↺ ▸ │├╰─╮ ⠹⠿")
 	fmt.Fprintln(w)
 
+	// The terminal backend: what auto-open and ⇥ can drive from here, and
+	// whether the program that does the driving is actually installed. This
+	// is the check that answers "why does nothing happen when a session
+	// starts", which used to need `autopane --explain` to find out.
+	fmt.Fprintln(w)
+	backend := detectBackend(os.Getenv)
+	if backend == backendNone {
+		warn("terminal: no split backend — %s", backendReason(os.Getenv))
+		fmt.Fprintln(w, "    the TUI works here; auto-open (agentpane install --autopane) and ⇥ do not")
+		fmt.Fprintln(w, "    supported: iTerm2, tmux, WezTerm, kitty — see docs/TERMINALS.md")
+		fmt.Fprintln(w, "    run agentpane in a second pane you split yourself, and answer prompts in the session pane")
+	} else {
+		chain := splitCommands(backend, os.Getenv, "agentpane", 64)
+		var missing []string
+		for _, c := range chain {
+			if _, err := exec.LookPath(c.argv[0]); err != nil {
+				missing = append(missing, c.argv[0])
+			}
+		}
+		switch {
+		case len(chain) == 0:
+			bad("terminal: %s detected, but nothing here names a pane to split", backend)
+		case len(missing) == len(chain):
+			bad("terminal: %s detected, but none of %s is on PATH — the split cannot run",
+				backend, strings.Join(missing, ", "))
+		default:
+			ok("terminal: %s — auto-open and ⇥ can drive this one", backend)
+			if len(missing) > 0 {
+				fmt.Fprintf(w, "    %s not on PATH; the next alternative in the chain is used instead\n",
+					strings.Join(missing, ", "))
+			}
+		}
+	}
+
 	// Capabilities that cannot be probed one-shot.
 	warn("focus reporting (CSI ?1004): cannot verify from a script — check via the pane title test in docs/ITERM2.md")
 	warn("OSC 8 hyperlinks: cannot verify from a script — ⌘-click a path in the pane to confirm")
-	warn("OSC 52 clipboard: cannot verify from a script — press y in the pane and check the clipboard (needs iTerm2's clipboard-access preference)")
+	warn("OSC 52 clipboard: cannot verify from a script — press y in the pane and check the clipboard (iTerm2 gates this behind a preference)")
 
 	return 0
 }

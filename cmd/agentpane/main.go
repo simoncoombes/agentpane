@@ -34,8 +34,8 @@ agentpane --demo-speed 2.0
 agentpane --demo-seek 90        jump to t=90s
 agentpane install               wire the hooks into ~/.claude/settings.json (asks first; --dry-run, --uninstall, --autopane)
 agentpane hook                  read one hook JSON on stdin, forward, exit 0 always
-agentpane autopane              SessionStart hook: auto-open the TUI in an iTerm2 split, exit 0 always
-agentpane doctor                check hooks installed, socket reachable, iTerm2 escapes, font glyphs
+agentpane autopane              SessionStart hook: auto-open the TUI in a split, exit 0 always (--explain says why not)
+agentpane doctor                check hooks installed, socket reachable, terminal backend, font glyphs
 agentpane doctor --session <id> the same checks for exactly that session's pane (no cwd guess)
 agentpane runs                  list persisted runs (every session)
 agentpane runs --session <id>   list only that session's runs

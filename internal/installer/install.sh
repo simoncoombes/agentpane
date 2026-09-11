@@ -23,7 +23,7 @@ into Claude Code's settings.json without touching anything else.
   --yes            skip the y/N confirmation (required when stdin is not a tty)
   --uninstall      remove agentpane entries only (hook + autopane), pruning
                    emptied groups and events but never the hooks key itself
-  --autopane       also auto-open the TUI in an iTerm2 split when a session
+  --autopane       also auto-open the TUI in a terminal split when a session
                    starts: appends one extra SessionStart group (matcher
                    "startup|resume") running "agentpane autopane"; combined
                    with --uninstall it removes ONLY that entry
