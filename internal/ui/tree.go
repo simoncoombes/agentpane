@@ -26,6 +26,12 @@ import (
 // max_calls_shown of its history on the tree.
 const defaultHistory = 0
 
+// growReserve is the room the growth pass (renderTree step 4) leaves unspent:
+// enough rows for one more agent block to arrive — its branch, its row head
+// and its activity line — so a strip that grew into a quiet pane is not torn
+// back down by the very next spawn.
+const growReserve = 3
+
 // Trunk geometry (§3.2): main owns one continuous vertical line at a fixed
 // column; every subagent leaves it on a curved branch at the same column; the
 // last rendered row's branch terminates at its elbow.
@@ -268,9 +274,48 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 		blocks = build(callsShown, expanded, noRoom)
 	}
 
-	// Nothing grows the strip back. Spare rows are spare: a tall pane shows more
-	// AGENTS, which is the thing a tree is for, rather than more history about
-	// the few it already had room for.
+	// 4. The ladder run backwards: spare rows go back into the history strip.
+	//
+	// The rule used to be "spare rows are spare" — a tall pane shows more
+	// AGENTS, not more history about the few it already had. That is right
+	// under pressure and wrong at the other end of the range, which is where
+	// most sessions actually live: one subagent working alone in a
+	// forty-row pane drew three lines and left thirty-five blank, and the one
+	// question the pane exists to answer — what is this thing DOING — got a
+	// single line of answer with a screenful of nothing under it.
+	//
+	// So the strip grows into rows that are otherwise going to be padding,
+	// one call at a time, for every agent at once (the same evenness the
+	// degrade ladder has). growReserve is what keeps it from thrashing: the
+	// growth stops short of the last few rows, so the next agent to arrive
+	// has somewhere to land without collapsing everybody's strip on the frame
+	// it appears. It can still collapse — a fan-out of eight will take every
+	// row back, which is correct — but it takes an arrival that genuinely
+	// needs the space, not merely the first one.
+	// Depth is never bought with breadth. If step 3 had to take an activity
+	// line off any row, the tree is already short of space to say what things
+	// are doing, and history — what they have already done — cannot be the
+	// thing that gets rows next.
+	breadthHeld := true
+	for _, a := range agents {
+		if expandable(a) && !expanded[a.ID] {
+			breadthHeld = false
+			break
+		}
+	}
+	for breadthHeld && history < callsShown {
+		try := history + 1
+		prev := blocks
+		history = try
+		setCalls()
+		blocks = build(callsShown, expanded, noRoom)
+		if fixed+count(blocks)+growReserve > avail {
+			history = try - 1
+			setCalls()
+			blocks = prev
+			break
+		}
+	}
 
 	// The stroke down to a new agent starts ABOVE it.
 	//
@@ -281,7 +326,7 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 	// carefully the new block below it is drawn. So the stroke travels: down
 	// through the previous block, a line at a time, un-drawing its extension
 	// ahead of itself, and only then into the arriving block.
-	descend(w, v, agents, blocks, callsShown, expanded, noRoom, inner, wide, now, pal)
+	descend(w, v, agents, blocks, callsShown, calls, expanded, noRoom, inner, wide, now, pal)
 
 	res := treeResult{breadth: true}
 	for _, a := range autoExpandOrder(agents) {
@@ -1235,9 +1280,15 @@ func transition(b block, a state.Agent, v *UIState, last bool,
 // (it is no longer last), and reverting a line to its pre-arrival form is one
 // substitution on its first rune — `├`→`╰`, `│`→` `, which is exactly what the
 // last block in a tree looks like.
+//
+// calls is the SAME per-agent history budget build() applied, not the shared
+// ceiling: rebuilding an arriving block with the ceiling made it taller than
+// the height the fit ladder had just counted, and the frame's last-resort clip
+// would then cut the tree. It only ever showed on an agent that reached the
+// tree already carrying tool calls, which is why it went unnoticed.
 func descend(w state.World, v *UIState, agents []state.Agent, blocks []block,
-	callsShown int, expanded, noRoom map[string]bool, width int, wide bool,
-	now time.Time, pal Palette) {
+	callsShown int, calls map[string]int, expanded, noRoom map[string]bool,
+	width int, wide bool, now time.Time, pal Palette) {
 
 	for i := range blocks {
 		d, ok := entering(agents[i], v)
@@ -1258,8 +1309,12 @@ func descend(w state.World, v *UIState, agents []state.Agent, blocks []block,
 			}
 		}
 		// This agent's own block waits for the stroke to reach it.
+		n := callsShown
+		if c, ok := calls[agents[i].ID]; ok && c < n {
+			n = c
+		}
 		blocks[i] = agentBlockAfter(w, v, agents[i], i == len(agents)-1,
-			expanded[agents[i].ID], callsShown, noRoom[agents[i].ID], width, wide,
+			expanded[agents[i].ID], n, noRoom[agents[i].ID], width, wide,
 			time.Duration(len(prev.lines))*rowDescendLine, now, pal)
 	}
 }

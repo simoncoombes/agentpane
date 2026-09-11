@@ -5,33 +5,33 @@ AGENTS 7[90m · 3f9c[0m                [1m⚑ 2 NEEDS YOU[0m
 [90m├─╮[0m
 [7m│ ╰[0m[1;7m⚑[0m[1;7m fix-ts2345-fallout[0m[7m  ↺2[0m[7m        [0m[1;7m▇▇▇▇·[0m[1;7m 52s[0m
 [90m│    [0m[90mFix the TS2345 fallout in api handlers[0m
+[90m│      [0m[32m✔[0m[90m Edit handlers.ts[0m[2;90m  +5 more[0m
+[90m│      [0m[1m⚑ permission request[0m[1m  52s[0m
 [90m│    [0m[32m▸ [0m[1mblocked · asked to clear the TS[0m[1m…[0m ▪▪▫·
 [90m├─╮[0m
 [90m│ ╰[0m[1m⚑[0m[1m typecheck-works…[0m                  [1m2m50s[0m
+[90m│      [0m[32m✔[0m[90m Edit tsconfig.json[0m[2;90m  +2 more[0m
+[90m│      [0m[32m✔[0m[90m Edit session.ts[0m
 [90m│    [0m[32m▸ [0m[1mno call open · silent 2m50s[0m      ▪▪▫·
 [90m├─╮[0m
 [90m│ ╰[0m[32m●[0m run-auth-tests          [32m◐ in Bash[0m[32m 3m12s[0m
+[90m│      [0m[32m✔[0m[90m Read session.test.ts[0m
+[90m│      [0m[32m✔[0m[90m Bash pnpm test --filter auth --run[0m
 [90m│    [0m[32m▸ [0mBash pnpm test --watch           ▪▫··
 [90m├─╮[0m
 [90m│ ╰[0m[32m●[0m audit-users-schema               0.1k/s
+[90m│      [0m[32m✔[0m[90m Edit users.ts[0m[2;90m  +4 more[0m
+[90m│      [0m[32m✔[0m[90m Read indexes.ts[0m
 [90m│    [0m[32m▸ [0mGrep "createUser" src/**         ▪▪▫·
 [90m├─╮[0m
 [90m│ ╰[0m[32m●[0m write-email-index                0.3k/s
+[90m│      [0m[32m✔[0m[90m Read indexes.ts[0m[2;90m  +3 more[0m
+[90m│      [0m[32m✔[0m[90m Edit 0042.sql[0m
 [90m│    [0m[32m▸ [0mEdit 0042.sql                    ▪▪▫·
 [90m├─╮[0m
 [90m│ ╰[0m[90m○[0m[90m document-constr…[0m[90m  queued[0m               
 [90m╰─╮[0m
 [90m  ╰[0m[90m◇[0m[90m reviewer[0m[90m  limited telemetry[0m            
-
-
-
-
-
-
-
-
-
-
 
 
 
