@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -104,13 +105,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		m.yankLogKey()
 
 	case "w":
-		if m.v.WidthMode == "wide" {
-			m.v.WidthMode = "narrow"
-			m.setToast("layout: narrow 44", false)
-		} else {
-			m.v.WidthMode = "wide"
-			m.setToast("layout: wide 64", false)
-		}
+		// A cycle rather than a toggle: fill is a third layout, not a mode
+		// switch, and the key that owns width should reach all three.
+		m.v.WidthMode = nextWidthMode(m.v.WidthMode)
+		m.setToast(widthToast(m.v.WidthMode, m.v.MaxWidth), false)
 		if m.cfg.PersistWidth != nil {
 			m.cfg.PersistWidth(m.v.WidthMode)
 		}
@@ -483,5 +481,33 @@ func (m *Model) handleMouse(msg tea.MouseMsg) {
 			// A click INSIDE the open inspector, on the row it belongs to:
 			// leave the scroll position where the reader put it.
 		}
+	}
+}
+
+// nextWidthMode is the `w` cycle: fill → wide → narrow → fill. It starts at
+// the default, so the two fixed budgets sit one and two presses away and a
+// third press is always the way back to the pane's own width.
+func nextWidthMode(cur string) string {
+	switch cur {
+	case "wide":
+		return "narrow"
+	case "narrow":
+		return "fill"
+	default:
+		return "wide"
+	}
+}
+
+// widthToast names the layout `w` just moved to. fill has no number to quote
+// because its width is whatever the pane is, so it names the ceiling instead,
+// which is the only part the reader cannot see for themselves.
+func widthToast(mode string, maxWidth int) string {
+	switch mode {
+	case "narrow":
+		return "layout: narrow 44"
+	case "wide":
+		return "layout: wide 64"
+	default:
+		return fmt.Sprintf("layout: fills the pane (max %d)", maxWidth)
 	}
 }

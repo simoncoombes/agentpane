@@ -34,7 +34,8 @@ func TestDefaults(t *testing.T) {
 		got  any
 		want any
 	}{
-		{"width", d.Width, "wide"},
+		{"width", d.Width, "fill"},
+		{"max_width", d.MaxWidth, 100},
 		{"stuck_after", d.StuckAfter, 45 * time.Second},
 		{"long_running_after", d.LongRunningAfter, 3 * time.Minute},
 		{"long_running_allow", d.LongRunningAllow, []string{"test", "build", "install", "compile", "bundle", "migrate"}},
@@ -99,6 +100,7 @@ color = false
 	}
 	want := Config{
 		Width:            "narrow",
+		MaxWidth:         100,
 		StuckAfter:       90 * time.Second,
 		LongRunningAfter: 10 * time.Minute,
 		LongRunningAllow: []string{"deploy"},
@@ -147,8 +149,9 @@ func TestInvalidValuesFallBack(t *testing.T) {
 		key   string
 		check func(Config) bool
 	}{
-		{"width bad enum", `width = "huge"`, "width", func(c Config) bool { return c.Width == "wide" }},
-		{"width wrong type", `width = 3`, "width", func(c Config) bool { return c.Width == "wide" }},
+		{"width bad enum", `width = "huge"`, "width", func(c Config) bool { return c.Width == "fill" }},
+		{"width wrong type", `width = 3`, "width", func(c Config) bool { return c.Width == "fill" }},
+		{"max_width below the narrow layout", `max_width = 20`, "max_width", func(c Config) bool { return c.MaxWidth == 100 }},
 		{"stuck_after not a duration", `stuck_after = "soonish"`, "stuck_after", func(c Config) bool { return c.StuckAfter == 45*time.Second }},
 		{"stuck_after wrong type", `stuck_after = 45`, "stuck_after", func(c Config) bool { return c.StuckAfter == 45*time.Second }},
 		{"stuck_after negative", `stuck_after = "-5s"`, "stuck_after", func(c Config) bool { return c.StuckAfter == 45*time.Second }},
@@ -238,7 +241,7 @@ slug_max = 40
 	if len(warns) != 2 {
 		t.Fatalf("want 2 warnings, got %d: %v", len(warns), warns)
 	}
-	if cfg.Width != "wide" || cfg.Spark != "tokens" {
+	if cfg.Width != "fill" || cfg.Spark != "tokens" {
 		t.Errorf("invalid values not defaulted: width=%q spark=%q", cfg.Width, cfg.Spark)
 	}
 	if cfg.SlugMax != 40 {

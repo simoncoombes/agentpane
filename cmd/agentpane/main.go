@@ -40,7 +40,7 @@ agentpane doctor --session <id> the same checks for exactly that session's pane 
 agentpane runs                  list persisted runs (every session)
 agentpane runs --session <id>   list only that session's runs
 agentpane runs show <id>        print one run summary
-agentpane --width narrow
+agentpane --width wide|narrow   fix the layout at 64 or 44 columns (default: fill the pane)
 agentpane --oneline             single-row status output for a tmux/iTerm2 status bar (§3.20)
 agentpane --oneline --session <id>
                                 status of exactly that session's pane
@@ -182,7 +182,7 @@ func parseFlags(args []string, stderr io.Writer) (cliFlags, error) {
 	fs.IntVar(&fl.cols, "cols", 64, "columns for --render-once")
 	fs.IntVar(&fl.rows, "rows", 40, "rows for --render-once")
 	fs.BoolVar(&fl.oneline, "oneline", false, "single-row status output (§3.20)")
-	fs.StringVar(&fl.width, "width", "", "layout width: wide|narrow")
+	fs.StringVar(&fl.width, "width", "", "layout width: fill|wide|narrow")
 	fs.StringVar(&fl.accent, "accent", "", "live accent: auto|2|3|4|5|6")
 	fs.BoolVar(&fl.noColor, "no-color", false, "disable all color (like NO_COLOR)")
 	fs.BoolVar(&fl.noBell, "no-bell", false, "disable the ask bell")
@@ -306,7 +306,7 @@ func configPath() string {
 // values warn and keep the config value (PART 7: never exit).
 func applyOverrides(cfg *config.Config, fl cliFlags, warnings *[]config.Warning) {
 	if fl.width != "" {
-		if fl.width == "wide" || fl.width == "narrow" {
+		if fl.width == "wide" || fl.width == "narrow" || fl.width == "fill" {
 			cfg.Width = fl.width
 		} else {
 			*warnings = append(*warnings, config.Warning{Key: "width", Msg: fmt.Sprintf("invalid --width %q - using %q", fl.width, cfg.Width)})

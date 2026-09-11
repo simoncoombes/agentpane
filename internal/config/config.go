@@ -13,7 +13,8 @@ import (
 
 // Config mirrors the PART 7 key set.
 type Config struct {
-	Width            string        `toml:"width"` // wide | narrow
+	Width            string        `toml:"width"`     // fill | wide | narrow
+	MaxWidth         int           `toml:"max_width"` // the ceiling fill stops at
 	StuckAfter       time.Duration `toml:"stuck_after"`
 	LongRunningAfter time.Duration `toml:"long_running_after"`
 	LongRunningAllow []string      `toml:"long_running_allow"`
@@ -54,7 +55,8 @@ func (w Warning) String() string {
 // Default returns the PART 7 defaults.
 func Default() Config {
 	return Config{
-		Width:            "wide",
+		Width:            "fill",
+		MaxWidth:         100,
 		StuckAfter:       45 * time.Second,
 		LongRunningAfter: 3 * time.Minute,
 		LongRunningAllow: []string{"test", "build", "install", "compile", "bundle", "migrate"},
@@ -105,7 +107,8 @@ func Load(path string) (Config, []Warning) {
 	var warns []Warning
 	l := loader{md: md, raw: raw, warns: &warns}
 
-	l.enum("width", &cfg.Width, "wide", "narrow")
+	l.enum("width", &cfg.Width, "fill", "wide", "narrow")
+	l.count("max_width", &cfg.MaxWidth, 44)
 	l.duration("stuck_after", &cfg.StuckAfter)
 	l.duration("long_running_after", &cfg.LongRunningAfter)
 	l.strings("long_running_allow", &cfg.LongRunningAllow)

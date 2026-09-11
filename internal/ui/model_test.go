@@ -241,9 +241,21 @@ func TestKeymapToasts(t *testing.T) {
 		t.Errorf("x toast = %+v", m.v.Toast)
 	}
 
-	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("w")})
-	if m.v.WidthMode != "narrow" || m.v.Toast.Text != "layout: narrow 44" {
-		t.Errorf("w toggle = %q toast %q", m.v.WidthMode, m.v.Toast.Text)
+	// `w` cycles fill → wide → narrow → fill, each press naming where it
+	// landed. fill is where a pane starts.
+	if m.v.WidthMode != "fill" {
+		t.Errorf("a pane starts in %q, want fill", m.v.WidthMode)
+	}
+	for _, want := range []struct{ mode, toast string }{
+		{"wide", "layout: wide 64"},
+		{"narrow", "layout: narrow 44"},
+		{"fill", "layout: fills the pane (max 100)"},
+	} {
+		m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("w")})
+		if m.v.WidthMode != want.mode || m.v.Toast.Text != want.toast {
+			t.Errorf("w cycle = %q toast %q, want %q / %q",
+				m.v.WidthMode, m.v.Toast.Text, want.mode, want.toast)
+		}
 	}
 
 	// The right column starts on the token burn rate, so the first t swaps

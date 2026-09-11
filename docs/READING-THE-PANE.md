@@ -147,6 +147,36 @@ Under 12 rows the condensed screen still draws a single one-line alert directly
 under the header (`⚑ <slug> permission ×3`), because at that height the tree
 cannot say it. `⏎` there jumps focus to the left pane.
 
+## How wide the pane draws
+
+The pane draws at whatever width it has, and redraws when you drag the divider.
+There is nothing to switch on.
+
+The extra columns go to text. The activity line, the tool-call labels and main's
+workstream label are all budgeted against the width, so above 64 columns they
+stop being truncated and things that had to be dropped to fit, like
+`✖ verify failed` on the row it belongs to, come back.
+
+It stops at 100 columns, because a row much wider than that is scanned twice
+rather than read once. `max_width` in `config.toml` moves that ceiling.
+
+`w` cycles to the two fixed budgets and back:
+
+| Layout | Width |
+|---|---|
+| fill (default) | the pane, up to `max_width` (100) |
+| wide | 64 columns |
+| narrow | 44 columns |
+
+Those budgets are ceilings, never floors, so every layout narrows with the
+pane. Only widening past 64 or 44 is what they refuse, which is the point: the
+tree was drawn to be read at a glance, and a fixed width means the row you
+learned yesterday is the row you read today. The choice is remembered in
+`~/.local/state/agentpane/ui.json`.
+
+Below 40 columns the pane becomes a single-column screen whatever the layout,
+and under 12 rows it becomes the condensed screen.
+
 ## Motion
 
 §3.13 allowed one moving thing, the spinner, because an animated monitor draws

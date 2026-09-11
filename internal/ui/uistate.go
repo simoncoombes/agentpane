@@ -99,8 +99,10 @@ type digest struct {
 // it (except the idempotent slug-table Assign).
 type UIState struct {
 	// Layout.
-	WidthMode string // "wide" (64) | "narrow" (44), toggled with w (§3.1)
-	RightCol  string // "since" | "rate" (§5.1 t)
+	WidthMode string // "fill" (the pane, up to MaxWidth) | "wide" (64) | "narrow" (44), cycled with w (§3.1)
+	// MaxWidth is where fill stops (config max_width). 0 means the default.
+	MaxWidth int
+	RightCol string // "since" | "rate" (§5.1 t)
 
 	// Selection and expansion (§3.3, §3.17).
 	SelID     string
@@ -199,6 +201,7 @@ type UIState struct {
 func newUIState(cfg config.Config) *UIState {
 	v := &UIState{
 		WidthMode: cfg.Width,
+		MaxWidth:  cfg.MaxWidth,
 		// The right column defaults to the token burn rate. Time-since-last-
 		// event answers "has this gone quiet?", which the stall machinery
 		// already shouts about on its own; the rate answers "what is this
@@ -216,8 +219,13 @@ func newUIState(cfg config.Config) *UIState {
 		SparkMetric: cfg.Spark,
 		LinksOn:     cfg.Links,
 	}
-	if v.WidthMode != "narrow" {
-		v.WidthMode = "wide"
+	switch v.WidthMode {
+	case "narrow", "wide":
+	default:
+		v.WidthMode = "fill"
+	}
+	if v.MaxWidth < 44 {
+		v.MaxWidth = fillMaxColumns
 	}
 	if v.MaxCalls <= 0 {
 		v.MaxCalls = 4

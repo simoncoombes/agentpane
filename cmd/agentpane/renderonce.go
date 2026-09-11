@@ -54,7 +54,7 @@ drain:
 	if fl.noColor || os.Getenv("NO_COLOR") != "" {
 		cfg.Color = false
 	}
-	if fl.width == "wide" || fl.width == "narrow" {
+	if fl.width == "wide" || fl.width == "narrow" || fl.width == "fill" {
 		cfg.Width = fl.width
 	}
 
