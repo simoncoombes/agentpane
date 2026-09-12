@@ -1437,3 +1437,33 @@ func TestOnlyAFailedCheckReachesTheRow(t *testing.T) {
 	}
 }
 
+// The header's total is the whole session's, not the run's. A run accrues only
+// from its own UserPromptSubmitted, so a pane that attached mid-session claimed
+// a total smaller than the rows under it added up to.
+func TestHeaderTokensCoverEveryRowOnScreen(t *testing.T) {
+	now := demoNow()
+	w := syntheticWorld(6, now)
+	// What the run's own counter saw: a fraction, because the pane attached
+	// after most of this work was already in the transcript.
+	w.Run.Tokens = 1000
+
+	sum := w.Main.Tokens
+	for _, a := range w.Agents {
+		sum += a.Tokens
+	}
+	if got := w.Tokens(); got != sum {
+		t.Fatalf("World.Tokens() = %d, want %d", got, sum)
+	}
+
+	v := newUIState(testConfig())
+	v.assignSlugsInSpawnOrder(w.Agents)
+	frame, _ := renderFrame(w, v, 64, 40, now, NewPalette(2, false))
+	head := strings.SplitN(stripANSI(frame), "\n", 2)[0]
+	want := formatTokens(sum) + " tok"
+	if !strings.Contains(head, want) {
+		t.Errorf("header %q does not carry the session total %q", head, want)
+	}
+	if strings.Contains(head, formatTokens(w.Run.Tokens)+" tok") {
+		t.Errorf("header %q still reports the run's partial count", head)
+	}
+}
