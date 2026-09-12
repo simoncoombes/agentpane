@@ -132,9 +132,11 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 		addPre("", truncSegs(line(
 			seg{fmt.Sprintf("all clear · %d merged", n), pal.Settled}), inner))
 	}
-	for _, ln := range quietLines(w, v, inner, pal) {
-		addPre(selQuiet, ln)
-	}
+	// The suppressed agents are NOT a line here any more. §1.5 asks that they
+	// be stated, not that they be stated first: a fan-out that trails 171 of
+	// them put a dim census between main and the one agent actually working,
+	// every frame, above everything the pane exists to show. The footer carries
+	// the count instead (renderFooter) and `s` opens the census.
 	// The returned agents are a list at the FOOT of the tree, not a notice at
 	// its head: they are finished work, they belong below the work in flight,
 	// and as a list they stay selectable — ⏎ opens any of them. Its rows are
@@ -631,27 +633,6 @@ func finishedLine(w state.World, v *UIState, width int, pal Palette) []seg {
 // quietPreview caps how many suppressed agents the expanded list names before
 // it says "+n more"; the full set is never longer than a screen's worth.
 const quietPreview = 6
-
-// quietLines renders the suppressed-agents notice: one dim line stating how
-// many agents the platform announced without ever showing them do anything
-// (state.World.Quiet), expanding into their ids and types when the line is
-// selected.
-//
-// The count is the honest half of the suppression rule (§1.5): the tree does
-// not carry forty rows that say nothing, and it does not pretend they never
-// existed either. AGENTS n in the header counts the rendered agents, so the
-// header and the tree always agree and this line reports the remainder
-// separately.
-func quietLines(w state.World, v *UIState, width int, pal Palette) [][]seg {
-	if len(w.Quiet) == 0 {
-		return nil
-	}
-	head := truncSegs(line(seg{quietCountText(len(w.Quiet)), pal.Settled}), width)
-	if v.SelID != selQuiet {
-		return [][]seg{head}
-	}
-	return append([][]seg{reverseLine(head)}, quietDetail(w, width, pal)...)
-}
 
 // quietCountText is the §1.5 notice itself: how many agents the platform
 // announced without ever showing them do anything. EVERY screen that can be on

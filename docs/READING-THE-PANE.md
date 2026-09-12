@@ -420,6 +420,29 @@ back (`3 returned agents on the tree · ⏎ lists them`), in the same place and
 still selectable, because a toggle whose only exit is a key you have to already
 know is a trap.
 
+## The agents that never did anything
+
+Claude Code announces subagents that run no tool, write no transcript and spend
+no tokens - a session with 5 real subagents was seen producing 40 of them. They
+get no row: forty lines that each say nothing is not a monitor. But they are not
+dropped either, because a pane that says "no subagents" while the machine holds
+forty of them is lying.
+
+So they are counted, on the right of the footer:
+
+```
+j/k move · ⏎ open · a returned · ? keys      171 quiet · s lists
+```
+
+`s` opens the census: every one of them, with its id, type, spawn time and last
+event. The count used to sit above the tree, between `main` and the first agent
+row - which put a list of things that did nothing on top of the things doing
+something, on every frame. It is chrome, and it now sits where the chrome is.
+
+Two screens still carry it as a line, because they have no footer to put it in:
+the idle summary, and the condensed screen under 12 rows. Under 40 columns the
+count rides on the header instead (`AGENTS 5 +40`).
+
 ## The idle screen
 
 When the session goes quiet the pane summarises the run it just watched:

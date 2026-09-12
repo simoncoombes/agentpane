@@ -419,6 +419,18 @@ func footerLine(w state.World, v *UIState, width int, now time.Time, pal Palette
 		right = line(seg{"⟳ following", pal.Live})
 	case v.Digest != nil:
 		right = line(seg{"▌ changed while away", pal.Settled})
+	case len(w.Quiet) > 0:
+		// §1.5, off the tree's head. The pane may never claim "no subagents"
+		// while the machine holds a hundred of them, but a census does not get
+		// to sit above the work either — it is chrome, and this is where the
+		// chrome lives. It outranks the column hint because the hint is a
+		// reminder of a key that is also in `?`, and this is a fact about the
+		// session that is stated nowhere else on this screen.
+		text := fmt.Sprintf("%d quiet · s lists", len(w.Quiet))
+		if width < 56 {
+			text = fmt.Sprintf("%d quiet", len(w.Quiet))
+		}
+		right = line(seg{text, pal.Deep})
 	case v.RightCol == "rate":
 		right = line(seg{"token rate →", pal.Deep})
 	default:

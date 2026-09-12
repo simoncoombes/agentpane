@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/simoncoombes/agentpane/internal/event"
 	"github.com/simoncoombes/agentpane/internal/slug"
 	"github.com/simoncoombes/agentpane/internal/source"
@@ -287,7 +289,8 @@ func TestReplay6dbbfaa6HooksAndTranscript(t *testing.T) {
 	if !strings.Contains(frame, "AGENTS 5") {
 		t.Errorf("header does not agree with the five rendered rows\n%s", frame)
 	}
-	quietLine := fmt.Sprintf("+%d agents with no recorded activity", phantomCount)
+	// Stated in the footer, off the tree's head, but stated (§1.5).
+	quietLine := fmt.Sprintf("%d quiet", phantomCount)
 	if !strings.Contains(frame, quietLine) {
 		t.Errorf("suppressed agents were not reported (%q missing)\n%s", quietLine, frame)
 	}
@@ -354,7 +357,7 @@ func TestReplay6dbbfaa6HooksOnly(t *testing.T) {
 			t.Errorf("fallback name %q missing from the frame\n%s", want, frame)
 		}
 	}
-	if !strings.Contains(frame, fmt.Sprintf("+%d agents with no recorded activity", phantomCount)) {
+	if !strings.Contains(frame, fmt.Sprintf("%d quiet", phantomCount)) {
 		t.Errorf("suppressed agents were not reported\n%s", frame)
 	}
 }
@@ -510,9 +513,10 @@ func TestReplayPhantomNeverStealsARealName(t *testing.T) {
 	}
 }
 
-// TestReplayQuietRowExpands: the suppressed count is selectable and names the
-// agents behind it, so nothing is invisible (§1.5).
-func TestReplayQuietRowExpands(t *testing.T) {
+// TestReplayQuietCensusIsInTheFooterAndReachable: the suppressed agents are
+// counted in the footer rather than above the tree, and `s` opens the census
+// that names them, so nothing is invisible (§1.5).
+func TestReplayQuietCensusIsInTheFooterAndReachable(t *testing.T) {
 	base := time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC)
 	hooks := newSliceSource("hooks", hookEvents(t, base))
 	m, _ := replay(t, hooks)
@@ -521,29 +525,47 @@ func TestReplayQuietRowExpands(t *testing.T) {
 	w := m.Snapshot()
 
 	v := newUIState(testConfig())
-	_, meta := renderFrame(w, v, 64, 44, now, NewPalette(2, false))
-	ids := selectableIDs(meta)
-	found := false
-	for _, id := range ids {
+	frame, meta := renderFrame(w, v, 64, 44, now, NewPalette(2, false))
+	plain := stripANSI(frame)
+
+	// Not above the tree, and not in the cursor's way.
+	lines := strings.Split(plain, "\n")
+	for _, id := range selectableIDs(meta) {
 		if id == selQuiet {
-			found = true
+			t.Errorf("the suppressed count is still a row j/k lands on:\n%s", plain)
 		}
 	}
-	if !found {
-		t.Fatalf("the suppressed-agents line is not reachable with j/k: %v", ids)
+	if i := strings.Index(plain, "quiet"); i >= 0 && strings.Count(plain[:i], "\n") < len(lines)-2 {
+		t.Errorf("the suppressed count is not in the footer:\n%s", plain)
+	}
+	if !strings.Contains(lines[len(lines)-1], fmt.Sprintf("%d quiet", phantomCount)) {
+		t.Errorf("the footer does not count the suppressed agents:\n%s", plain)
+	}
+	if branchLines(plain) != 5 {
+		t.Errorf("moving the count changed the agent rows\n%s", plain)
 	}
 
-	v.SelID = selQuiet
-	frame, _ := renderFrame(w, v, 64, 44, now, NewPalette(2, false))
-	frame = stripANSI(frame)
-	first := placeholderName(w.Quiet[0].ID, w.Quiet[0].Type)
-	if !strings.Contains(frame, first) {
-		t.Errorf("expanding the suppressed line did not name %q\n%s", first, frame)
+	// s opens the census, which names them.
+	mod, _ := newTestModel(t)
+	mod.v, mod.world = v, w
+	mod.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	if v.SelID != selQuiet || !v.InspectorOpen {
+		t.Fatalf("s did not open the suppressed-agents census (sel=%q open=%v)",
+			v.SelID, v.InspectorOpen)
 	}
-	if !strings.Contains(frame, fmt.Sprintf("+%d more", phantomCount-quietPreview)) {
-		t.Errorf("the expanded list did not account for the rest\n%s", frame)
+	censusFrame, _ := renderFrame(w, v, 64, 44, now, NewPalette(2, false))
+	census := stripANSI(censusFrame)
+	if !strings.Contains(census, "suppressed agents") {
+		t.Errorf("s did not draw the census\n%s", census)
 	}
-	if branchLines(frame) != 5 {
-		t.Errorf("expanding the suppressed line changed the agent rows\n%s", frame)
+	named := 0
+	for _, q := range w.Quiet {
+		if strings.Contains(census, q.ID) {
+			named++
+		}
+	}
+	if named == 0 {
+		t.Errorf("the census named none of the %d suppressed agents\n%s",
+			len(w.Quiet), census)
 	}
 }

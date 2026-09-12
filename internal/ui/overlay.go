@@ -30,6 +30,11 @@ func renderOverlay(w state.World, v *UIState, cols, rows int, pal Palette) [][]s
 	add(key("y/Y", "yank error/command · yank the inspector log"))
 	add(key("⇞/⇟", "page the inspector when it's open"))
 	add(key("a", "returned agents: list at the foot ↔ rows on the tree"))
+	// Listed only when there is a census to open: a key that opens an empty
+	// view is worse than one that is not offered.
+	if len(w.Quiet) > 0 {
+		add(key("s", "the agents announced with no recorded activity"))
+	}
 	add(key("t", "right column: since ↔ token rate"))
 	add(key("w", "cycle fill / wide 64 / narrow 44"))
 	// 1–9 is listed only when it does something: the picker is withheld on a
