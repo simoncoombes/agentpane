@@ -389,10 +389,23 @@ that did some.
 
 Those rows are still rows: `j`/`k` reach them, `⏎` or a click opens the log the
 agent left behind, and the cursor follows an agent into the list when it
-returns mid-read. The list is capped by the room the live agents leave it and
-says `+n more` when it is cut; where there is no room for a list at all - the
-condensed screen under 12 rows - it collapses to `+3 returned agents · a shows
-them`, and under 40 columns the count rides on the header (`AGENTS 8 ✓3`).
+returns mid-read.
+
+**The list holds ten rows and scrolls.** However tall the pane, it stops at ten:
+the pane is for what is running now, and a receipt that grows with the run ends
+up owning the screen. A longer list says where its window sits, on the right of
+the heading, in the same form the tree's own scroll uses:
+
+```
+RETURNED 18                                              1-10 / 18
+```
+
+`j` at the bottom row moves the window down by one, `k` at the top moves it back
+up; it holds still otherwise, so a return landing at the top never shifts the row
+you are reading. A short pane gives the list less than ten - the live agents get
+their rows first - and where there is no room for a list at all (the condensed
+screen under 12 rows) it collapses to `+3 returned agents · a shows them`. Under
+40 columns the count rides on the header (`AGENTS 8 ✓3`).
 
 `a` puts them back on the tree as full rows - and so does `⏎` on the heading.
 That is not a one-way door: with the rows on the tree the foot carries the way

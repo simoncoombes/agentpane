@@ -18,13 +18,13 @@ AGENTS 32[32m  ▇·····[0m[90m 8/40[0m                           [90m4
 [7m│ ╰[0m[7m●[0m[7m port-number-20[0m[7m                                           [0m[7m2s[0m
 [90m│    [0m[90mPort the number 20 routes[0m
 
-RETURNED 8
+
+RETURNED 8                                               [90m1–5 / 8[0m
 [90m────────────────────────────────────────────────────────────────[0m
 [32m  port-number-2 [0m                                        [90m2:50[0m  3k
 [32m  port-number-7 [0m                                        [90m2:50[0m  8k
 [32m  port-number-12[0m                                       [90m2:50[0m  13k
 [32m  port-number-17[0m                                       [90m2:50[0m  18k
 [32m  port-number-22[0m                                       [90m2:50[0m  23k
-[2;90m  +3 more[0m
 [90m────────────────────────────────────────────────────────────────[0m
 [2;90mj/k move · ⏎ open · a returned · ? keys[0m                [90m7–13 / 32[0m

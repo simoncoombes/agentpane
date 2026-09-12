@@ -221,11 +221,50 @@ func (m *Model) liveAgents() bool {
 // selectionOrder is the j/k order over the current render: the rows the last
 // frame actually painted (selectableIDs). Before the first paint there is only
 // main to sit on.
+//
+// The one exception is the returned list, which is windowed: its whole order is
+// spliced in where the drawn rows are, so j past the bottom of the window lands
+// on the agent below it and the next frame's returnedWindow scrolls to bring it
+// on screen. Without this the cursor stops at the window's edge and the rows
+// under it are unreachable — a capped list you cannot scroll is a truncated one.
 func (m *Model) selectionOrder() []string {
-	if ids := selectableIDs(m.meta); len(ids) > 0 {
+	ids := selectableIDs(m.meta)
+	if len(ids) == 0 {
+		return []string{event.MainAgentID}
+	}
+	return spliceReturned(ids, m.v.returnedAgents(m.world))
+}
+
+// spliceReturned replaces the returned-agent ids the frame drew with the full
+// returned list, in list order, leaving every other row where it was.
+func spliceReturned(ids []string, returned []state.Agent) []string {
+	if len(returned) == 0 {
 		return ids
 	}
-	return []string{event.MainAgentID}
+	inList := make(map[string]bool, len(returned))
+	for _, a := range returned {
+		inList[a.ID] = true
+	}
+	first := -1
+	for i, id := range ids {
+		if inList[id] {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		return ids // no list on screen: the count line, or the rows are on the tree
+	}
+	out := append([]string(nil), ids[:first]...)
+	for _, a := range returned {
+		out = append(out, a.ID)
+	}
+	for _, id := range ids[first:] {
+		if !inList[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // focusSession jumps the terminal's focus to the session pane — the pane you

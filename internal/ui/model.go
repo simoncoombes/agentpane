@@ -656,6 +656,7 @@ func (m *Model) resetForSession(sessionID string) {
 	m.v.Marks = map[string]time.Time{}
 	m.v.PinSeq = 0
 	m.v.ScrollTop = 0
+	m.v.ReturnedTop = 0
 	m.v.SelID = event.MainAgentID
 	m.v.InspectorOpen = false
 	m.v.InspectorScroll = 0

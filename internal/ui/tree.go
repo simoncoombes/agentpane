@@ -149,7 +149,11 @@ func renderTree(w state.World, v *UIState, width, avail int, now time.Time, pal 
 	if v.ShowFinished && finishedTotal(w) > 0 {
 		postBudget = 2
 	} else if len(returned) > 0 {
-		postBudget = len(returned) + 3 // a blank, the header, its rule, one line each
+		rows := len(returned)
+		if rows > maxReturnedRows {
+			rows = maxReturnedRows // the list is a foot, not a second tree
+		}
+		postBudget = rows + 3 // a blank, the header, its rule, one line each
 		if max := avail / 3; postBudget > max {
 			postBudget = max // the live agents own the pane
 		}
@@ -439,21 +443,29 @@ func returnedLines(w state.World, v *UIState, returned []state.Agent, budget, wi
 	if len(returned) == 0 {
 		return nil, nil
 	}
-	head := func(text string) []seg {
+	// head is the section heading: the count on the left, and on the right the
+	// window's place in the list whenever the list is longer than the window —
+	// the same "12–20 / 43" the tree's own scroll reports, in the same voice.
+	head := func(text string, top, shown, total int) []seg {
 		ln := truncSegs(line(seg{text, pal.Primary}), width)
+		if shown > 0 && shown < total {
+			ln = composeLR(line(seg{text, pal.Primary}),
+				line(seg{fmt.Sprintf("%d–%d / %d", top+1, top+shown, total), pal.Settled}),
+				width)
+		}
 		if v.SelID == selFinished {
 			ln = reverseLine(ln)
 		}
 		return ln
 	}
 	if budget == 1 {
-		return [][]seg{head(returnedCountText(len(returned)))}, []string{selFinished}
+		return [][]seg{head(returnedCountText(len(returned)), 0, 0, 0)}, []string{selFinished}
 	}
 	// A blank line separates finished work from work in flight, as soon as
 	// there is a row to spare for it.
 	var lines [][]seg
 	var ids []string
-	rows := budget - 1
+	rows := budget - 1 // the heading
 	if budget >= 3 {
 		// The blank carries the section's own id, so the frame can tell where
 		// the tree ends and the list begins (and a click on it lands on the
@@ -461,27 +473,25 @@ func returnedLines(w state.World, v *UIState, returned []state.Agent, budget, wi
 		lines, ids = append(lines, nil), append(ids, selFinished)
 		rows--
 	}
-	more := 0
-	shown := returned
-	if len(shown) > rows {
-		more = len(shown) - (rows - 1)
-		shown = shown[:rows-1]
-		// Keep the cursor on screen: a selected agent below the cut takes the
-		// last drawn slot rather than disappearing out of the selection order.
-		if i := agentIndex(returned, v.SelID); i >= len(shown) && len(shown) > 0 {
-			shown = append(append([]state.Agent(nil), shown[:len(shown)-1]...), returned[i])
-		}
+	drawRule := rows > 1
+	if drawRule {
+		rows--
 	}
+	// The window. The list no longer grows without end and no longer cuts
+	// itself off at a "+n more" the reader cannot get past: it holds ten rows,
+	// it holds still, and j/k walk it (selectionOrder splices the whole list
+	// into the cursor's order, so the row below the last drawn one is reachable
+	// and this window follows the cursor to it).
+	top, shown := returnedWindow(returned, v, rows)
 
-	lines = append(lines, head("RETURNED "+itoa(len(returned))))
+	lines = append(lines, head("RETURNED "+itoa(len(returned)), top, len(shown), len(returned)))
 	ids = append(ids, selFinished)
 	// A rule under it: the list is a different region from the tree above, and
 	// a heading that shares the tree's weight and colour is a heading nobody
 	// reads as one.
-	if rows > 1 {
+	if drawRule {
 		lines = append(lines, rule(width, pal))
 		ids = append(ids, "")
-		rows--
 	}
 	// Columns, not a ragged left edge: the list is a table of finished work and
 	// the eye should be able to run down any one of its facts. The name and
@@ -545,12 +555,46 @@ func returnedLines(w state.World, v *UIState, returned []state.Agent, budget, wi
 		lines = append(lines, ln)
 		ids = append(ids, a.ID)
 	}
-	if more > 0 {
-		lines = append(lines, truncSegs(line(
-			seg{fmt.Sprintf("  +%d more", more), pal.Deep}), width))
-		ids = append(ids, "")
-	}
 	return lines, ids
+}
+
+// maxReturnedRows caps the returned list however tall the pane is. It used to
+// take a third of the screen and grow with the run: a fan-out of forty left a
+// wall of finished work under three live agents, which is the wrong way round —
+// the pane is for what is happening now, and the list is the receipt. Ten rows
+// is as much of a receipt as anyone reads at a glance; the rest are a keypress
+// away rather than a screenful away.
+const maxReturnedRows = 10
+
+// returnedWindow picks the visible slice of the returned list. It holds still
+// (§3.13) unless the cursor has walked off an edge, which is the only thing
+// that scrolls it: the list is read from the top and the newest returns are
+// there, so nothing else may move it under the reader.
+func returnedWindow(returned []state.Agent, v *UIState, rows int) (int, []state.Agent) {
+	if rows <= 0 || len(returned) == 0 {
+		return 0, nil
+	}
+	if rows >= len(returned) {
+		v.ReturnedTop = 0
+		return 0, returned
+	}
+	top := v.ReturnedTop
+	if max := len(returned) - rows; top > max {
+		top = max
+	}
+	if top < 0 {
+		top = 0
+	}
+	if i := agentIndex(returned, v.SelID); i >= 0 {
+		if i < top {
+			top = i
+		}
+		if i >= top+rows {
+			top = i - rows + 1
+		}
+	}
+	v.ReturnedTop = top
+	return top, returned[top : top+rows]
 }
 
 // returnedCountText is the one-line form, for the screens with no room for the
