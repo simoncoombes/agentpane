@@ -520,7 +520,7 @@ func finishedTotal(w state.World) int {
 // order it painted them.
 //
 // It used to be re-derived from the world plus a set of geometry predicates
-// (bandPresent, quietLineDrawn…), one per pseudo-row, each a restatement of
+// (bandPresent, one per pseudo-row), each of them a restatement of
 // something the renderer had already decided. Every new row that is drawn only
 // sometimes — the returned-agents list is the latest — needed another predicate,
 // and any drift between the two put the cursor on a line that was never on
