@@ -149,6 +149,24 @@ type World struct {
 	Rev uint64
 }
 
+// Tokens is everything the session has been observed to spend: main plus every
+// agent that earned a row, live or returned.
+//
+// It is deliberately NOT Run.Tokens. A run accrues only from the moment its
+// UserPromptSubmitted arrives, and a pane that attaches to a session already in
+// flight replays the transcript behind that moment — so main and the agents
+// carry work the run's counter never saw. The header sat above a tree and a
+// RETURNED list whose own numbers added up to half as much again as the total
+// it was claiming, which is the one thing a total may not do. Quiet agents add
+// nothing here by construction: a token is one of the things that earns a row.
+func (w World) Tokens() int {
+	n := w.Main.Tokens
+	for _, a := range w.Agents {
+		n += a.Tokens
+	}
+	return n
+}
+
 type Session struct {
 	ID string
 	// ShortID is the attached short id shown in the header (§3.8a).

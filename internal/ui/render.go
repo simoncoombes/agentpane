@@ -308,12 +308,22 @@ func headerLine(w state.World, v *UIState, width int, now time.Time, pal Palette
 		right = line(seg{copyDisconnected, pal.NeedsYou})
 	case alerts > 0:
 		right = line(seg{fmt.Sprintf("⚑ %d NEEDS YOU", alerts), pal.NeedsYou})
-	case w.Run != nil:
-		t := formatClock(now.Sub(w.Run.StartedAt))
-		if tok := formatTokens(w.Run.Tokens); tok != "" {
-			t += " · " + tok + " tok"
+	default:
+		// The clock is the run's — it is what "how long has this been going"
+		// means — but the token count is the whole session's (World.Tokens),
+		// because everything it sits above is. It is also the only number here
+		// worth having when no run is in flight, which is why it is no longer
+		// gated on one.
+		var parts []string
+		if w.Run != nil {
+			parts = append(parts, formatClock(now.Sub(w.Run.StartedAt)))
 		}
-		right = line(seg{t, pal.Settled})
+		if tok := formatTokens(w.Tokens()); tok != "" {
+			parts = append(parts, tok+" tok")
+		}
+		if len(parts) > 0 {
+			right = line(seg{strings.Join(parts, " · "), pal.Settled})
+		}
 	}
 	return composeLR(left, right, width)
 }

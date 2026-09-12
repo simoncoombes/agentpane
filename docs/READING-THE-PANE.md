@@ -306,6 +306,13 @@ honest gap — a pane that attaches to a file already in progress cannot know th
 total that came before, so it reports per-message deltas rather than inventing
 a cumulative count.
 
+The total on the right of the header is the **session's**: main plus every agent
+on the tree and in the returned list. It is not the run's own counter, which only
+starts at the prompt that began the run - a pane attached to a session already in
+flight would then head a screenful of rows with a total smaller than they add up
+to, which is the one thing a total may not do. The clock beside it is still the
+run's: that is what "how long has this been going" means.
+
 ## What an agent is running on
 
 Every agent names its own on its row, after the slug:
