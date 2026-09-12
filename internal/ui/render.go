@@ -92,14 +92,6 @@ func frameWidth(v *UIState, cols int) int {
 	return width
 }
 
-// quietLineDrawn reports whether the current geometry paints the §1.5
-// suppressed-agents notice as a selectable row. Every screen does — the tree,
-// the idle screen and the condensed screen — except the <40-column one, where
-// the count appears on the header instead (renderTiny).
-func quietLineDrawn(w state.World, cols int) bool {
-	return len(w.Quiet) > 0 && cols >= 40
-}
-
 // idlePhase reports whether the §3.8 idle screen owns the pane: no run in
 // flight and the session is idle/ended, or nothing has ever happened.
 func idlePhase(w state.World) bool {
@@ -568,11 +560,10 @@ func renderTiny(w state.World, v *UIState, cols, rows int, now time.Time, pal Pa
 	if entries > 0 {
 		right = line(seg{fmt.Sprintf("⚑%d", entries), pal.NeedsYou})
 	}
-	// Under 40 columns there is no room for the §1.5 notice as a row, so the
-	// count rides on the header instead: "AGENTS 5 +40". It is the one place
-	// the suppressed agents can be stated here, and stating them somewhere is
-	// not optional — but it is not a selectable row, so selectionIDs must leave
-	// selQuiet out at this width (quietLineDrawn).
+	// Under 40 columns there is no footer to carry the §1.5 count and no room
+	// for it as a row, so it rides on the header instead: "AGENTS 5 +40". It is
+	// the one place the suppressed agents can be stated here, and stating them
+	// somewhere is not optional.
 	head := line(seg{fmt.Sprintf("AGENTS %d", len(w.Agents)), pal.Primary})
 	if n := len(w.Quiet); n > 0 {
 		head = append(head, seg{fmt.Sprintf(" +%d", n), pal.Settled})
