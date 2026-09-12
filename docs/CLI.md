@@ -87,6 +87,7 @@ color = true              # false == NO_COLOR
 | `Y` | yank the whole inspector log; on `main` with an empty log, the full workstream label |
 | `w` | cycle the layout: fill the pane, wide 64, narrow 44 (persisted) |
 | `a` | returned agents: the list at the foot of the tree (default) ↔ full rows on it |
+| `s` | the suppressed agents: open the census of everything the platform announced that never did anything (the footer's `n quiet`) |
 | `1`-`9` | switch attached session (idle screen, only when unpinned and more than one session is live; no-op otherwise) |
 | `t` | cycle the right column: since-last-event, token burn rate (persisted) |
 | `⇞` / `⇟` | page the inspector when it is open |

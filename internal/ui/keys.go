@@ -128,6 +128,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "a":
 		m.toggleFinished()
 
+	case "s":
+		// The way into the suppressed-agents census now that it is not a row on
+		// the tree. `s` for suppressed, which is what the code and the docs call
+		// them; "quiet" is only what the footer has room to say.
+		m.openQuiet()
+
 	case "tab":
 		m.focusSession()
 
@@ -301,6 +307,25 @@ func (m *Model) toggleFinished() {
 	m.dirty = true
 }
 
+// openQuiet opens the suppressed-agents census: the full list with per-agent
+// spawn and last-event times (§13.3 Q8), which renderInspector routes selQuiet
+// to. It is reached by `s`, and by ⏎ on the count line on the screens that
+// still draw one (idle, condensed).
+//
+// Scroll starts at the bottom — the newest announcements, which is where a
+// suppressed agent that is still alive necessarily is — and Follow is cleared,
+// because a static census has nothing to follow.
+func (m *Model) openQuiet() {
+	if len(m.world.Quiet) == 0 {
+		return // a key that opens an empty view is worse than one that does nothing
+	}
+	m.v.SelID = selQuiet
+	m.v.InspectorOpen = true
+	m.v.InspectorScroll = 0
+	m.v.Follow = false
+	m.dirty = true
+}
+
 // moveSel moves selection by id, never by index (§3.13), and cancels follow
 // (§5.1).
 func (m *Model) moveSel(delta int) {
@@ -367,15 +392,7 @@ func (m *Model) enterKey() {
 		return
 	}
 	if m.v.SelID == selQuiet {
-		// §13.3 Q8: ⏎ on the `+n` line opens the full list with per-agent spawn
-		// and last-event times — renderInspector routes selQuiet to
-		// renderQuietInspector. Scroll starts at the bottom (the newest
-		// announcements), which is where a suppressed agent that is still alive
-		// necessarily is. Follow is cleared because there is nothing to follow.
-		m.v.InspectorOpen = true
-		m.v.InspectorScroll = 0
-		m.v.Follow = false
-		m.dirty = true
+		m.openQuiet()
 		return
 	}
 	m.v.InspectorOpen = true
