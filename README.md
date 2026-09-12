@@ -13,6 +13,8 @@ doing right now, and a flag when something is blocked on you.
 
 It is read-only. It cannot send prompts, edit your files, or kill an agent.
 
+MIT licensed, commercial use included. See [LICENSE](LICENSE).
+
 ## Install
 
 ```sh
@@ -35,8 +37,67 @@ Then run `agentpane` in a second pane next to your session.
 
 ## The marks
 
+```text
+AGENTS 7 · 3f9c  ▇▇···· 5/11                               ⚑ 2 NEEDS YOU
+────────────────────────────────────────────────────────────────────────
+◍ main  refactor auth                                               112k
+│ holding 2 agents · waiting on you                                   5s
+├─╮
+│ ╰⚑ fix-ts2345-fallout  ↺2                                    ▇▇▇▇· 52s
+│    Fix the TS2345 fallout in api handlers
+│      ⚑ permission request  52s  +6 more
+│    ▸ blocked · asked to clear the TS cache  ✖ verify failed  ▪▪▫·  44k
+├─╮
+│ ╰⚑ typecheck-works…                                              2m50s
+│      ✔ Edit session.ts  +11 −2  +3 more
+│    ▸ no call open · silent 2m50s                             ▪▪▫·  33k
+├─╮
+│ ╰● run-auth-tests                                      ◐ in Bash 3m12s
+│      ✔ Bash pnpm test --filter auth --run  +1 more
+│    ▸ Bash pnpm test --watch                                  ▪▫··  38k
+├─╮
+│ ╰● audit-users-schema                                           0.1k/s
+│      ✔ Read indexes.ts  +5 more
+│    ▸ Grep "createUser" src/**                                ▪▪▫·  52k
+├─╮
+│ ╰● write-email-index                                            0.3k/s
+│      ✔ Edit 0042.sql  +30 −2  +4 more
+│    ▸ Edit 0042.sql                                           ▪▪▫·  86k
+├─╮
+│ ╰○ document-constr…  queued
+╰─╮
+  ╰◇ reviewer  limited telemetry
+
+RETURNED 5
+────────────────────────────────────────────────────────────────────────
+  scan-migrations                                              3:56  47k
+  lint-and-format                                              3:56  47k
+  port-session-he…                                             2:54  31k
+  check-schema-drift                                           1:51  22k
+  inventory-flags                                              1:08  19k
+────────────────────────────────────────────────────────────────────────
+⇥ jump to the session pane to answer                  34 quiet · s lists
+```
+
 `⚑` blocked on you · `●` running · `○` queued · `◇` teammate, reports almost
 nothing · `▪▪▫·` how far it got · the number on the right is tokens
+
+Every agent gets a name, the calls it has already made, and the call it is in
+now. The `✔` lines are history and drawn dim, the `▸` line is what is happening
+this second. `fix-ts2345-fallout` has been stopped on a permission request for
+52 seconds. `typecheck-works` carries the other flag the header is counting,
+because nothing has come out of it for 2m50s. `run-auth-tests` has been inside
+the same `pnpm test --watch` for 3m12s, which is what an agent that started a
+watcher by mistake looks like.
+
+The right column is tokens, or the burn rate in `k/s` while a call is open. `t`
+swaps it for time since the last event. `↺2` counts retries, and `✖ verify
+failed` is a test or build command that exited non-zero.
+
+Under the tree, `RETURNED` lists what has finished, newest first, with how long
+each one ran and what it cost. It holds ten rows and scrolls with `j`/`k`. The
+`34 quiet` in the footer counts the subagents Claude Code announced that never
+ran a tool or spent a token, which `s` lists in full.
 
 `⏎` inspects a row, `⇥` jumps to the session pane to answer whoever is blocked,
 `a` shows the agents that finished, `?` lists the rest.
@@ -59,5 +120,3 @@ agent that reports nothing gets a dim row rather than an invention.
 * [CODEX.md](docs/CODEX.md). Watching a Codex run.
 * [DATA-SOURCES.md](docs/DATA-SOURCES.md). What it reads, and how fast.
 * [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md)
-
-MIT licensed. See [LICENSE](LICENSE).
