@@ -109,6 +109,10 @@ type UIState struct {
 	Pins      map[string]int // agent id → pin sequence (oldest-first drop)
 	PinSeq    int
 	ScrollTop int // first visible subagent index when scrolling (§3.9)
+	// ReturnedTop is the first visible index of the returned-agents list at
+	// the foot of the tree. The list is capped at maxReturnedRows however
+	// tall the pane is and scrolls under j/k like the tree above it.
+	ReturnedTop int
 
 	// Inspector (PART 4).
 	InspectorOpen   bool

@@ -417,8 +417,8 @@ func TestNoBareActivityLine(t *testing.T) {
 	}
 }
 
-// The list is capped by the room the live agents leave it: it says how many it
-// could not draw, and it never leaves the cursor on an undrawn row.
+// The list is capped by the room the live agents leave it, it says where in the
+// list the window sits, and it never leaves the cursor on an undrawn row.
 func TestReturnedListCapsAndKeepsTheCursor(t *testing.T) {
 	now := demoNow()
 	w := syntheticWorld(1, now)
@@ -439,8 +439,8 @@ func TestReturnedListCapsAndKeepsTheCursor(t *testing.T) {
 	if !strings.Contains(plain, "RETURNED 10") {
 		t.Fatalf("the list does not state the full count:\n%s", plain)
 	}
-	if !strings.Contains(plain, "more") {
-		t.Errorf("the list was cut without saying so:\n%s", plain)
+	if !strings.Contains(plain, "/ 10") {
+		t.Errorf("the list was windowed without saying where:\n%s", plain)
 	}
 	painted := false
 	for _, id := range meta.lineIDs {
@@ -450,6 +450,78 @@ func TestReturnedListCapsAndKeepsTheCursor(t *testing.T) {
 	}
 	if !painted {
 		t.Errorf("the selected agent was cut out of the list:\n%s", plain)
+	}
+}
+
+// However tall the pane, the list stops at maxReturnedRows: the pane is for
+// what is running, and a receipt that grows without end takes it over.
+func TestReturnedListStopsAtTenRows(t *testing.T) {
+	now := demoNow()
+	w := syntheticWorld(1, now)
+	for i := 0; i < 25; i++ {
+		w.Agents = append(w.Agents, state.Agent{
+			ID: "done-" + itoa(i), Name: "worker " + itoa(i), Type: "general-purpose",
+			Status: state.StatusDone, Station: 3, SpawnIndex: i + 2,
+			SpawnedAt: now.Add(-2 * time.Minute),
+			DoneAt:    now.Add(-time.Duration(i+1) * 10 * time.Second),
+		})
+	}
+	v := newUIState(testConfig())
+	v.assignSlugsInSpawnOrder(w.Agents)
+
+	frame, meta := renderFrame(w, v, 64, 80, now, NewPalette(2, false))
+	plain := stripANSI(frame)
+	drawn := 0
+	for _, id := range meta.lineIDs {
+		if strings.HasPrefix(id, "done-") {
+			drawn++
+		}
+	}
+	if drawn != maxReturnedRows {
+		t.Errorf("drew %d returned rows in an 80-row pane, want %d:\n%s",
+			drawn, maxReturnedRows, plain)
+	}
+	if !strings.Contains(plain, "1–10 / 25") {
+		t.Errorf("the window does not say where it sits:\n%s", plain)
+	}
+}
+
+// j past the bottom of the window scrolls it. A capped list you cannot walk
+// past is a truncated one, and the rows under the cut were unreachable.
+func TestReturnedListScrollsUnderTheCursor(t *testing.T) {
+	now := demoNow()
+	w := syntheticWorld(1, now)
+	for i := 0; i < 25; i++ {
+		w.Agents = append(w.Agents, state.Agent{
+			ID: "done-" + itoa(i), Name: "worker " + itoa(i), Type: "general-purpose",
+			Status: state.StatusDone, Station: 3, SpawnIndex: i + 2,
+			SpawnedAt: now.Add(-2 * time.Minute),
+			DoneAt:    now.Add(-time.Duration(i+1) * 10 * time.Second),
+		})
+	}
+	v := newUIState(testConfig())
+	v.SelID = "done-9" // the last row the first window draws
+	v.assignSlugsInSpawnOrder(w.Agents)
+
+	m := &Model{v: v, world: w}
+	_, m.meta = renderFrame(w, v, 64, 80, now, NewPalette(2, false))
+	m.moveSel(1)
+	if v.SelID != "done-10" {
+		t.Fatalf("j at the window's edge selected %q, want done-10", v.SelID)
+	}
+	frame, meta := renderFrame(w, v, 64, 80, now, NewPalette(2, false))
+	plain := stripANSI(frame)
+	painted := false
+	for _, id := range meta.lineIDs {
+		if id == "done-10" {
+			painted = true
+		}
+	}
+	if !painted {
+		t.Errorf("the window did not scroll to the newly selected row:\n%s", plain)
+	}
+	if !strings.Contains(plain, "2–11 / 25") {
+		t.Errorf("the window moved by more than the one row asked for:\n%s", plain)
 	}
 }
 
@@ -1364,3 +1436,4 @@ func TestOnlyAFailedCheckReachesTheRow(t *testing.T) {
 		t.Errorf("a failed check is missing from the row:\n%s", got)
 	}
 }
+
