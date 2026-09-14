@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/simoncoombes/agentpane/internal/event"
@@ -135,16 +134,6 @@ func New(dir string, opts ...Option) *Source {
 }
 
 func (s *Source) Name() string { return "registry" }
-
-// pidAlive reports process existence: kill(pid,0) succeeds or fails with
-// EPERM for a live pid, ESRCH for a dead one.
-func pidAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
-}
 
 // Sessions returns the live sessions (stale-pid files skipped), newest
 // first by UpdatedAt.

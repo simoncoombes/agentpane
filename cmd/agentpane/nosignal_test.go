@@ -10,14 +10,20 @@ import (
 
 // TestNoProcessSignals enforces §5.3 / PART 10 bullet 5 at the source level:
 // NO code path anywhere sends a signal to any process. The single allowed
-// use is the registry's liveness probe kill(pid, 0), which delivers no
-// signal (POSIX: sig 0 performs error checking only).
+// use is the registry's liveness probe kill(pid, 0) in pidalive_unix.go,
+// which delivers no signal (POSIX: sig 0 performs error checking only).
+//
+// The Windows half of that probe (pidalive_windows.go) needs no exemption:
+// OpenProcess plus GetExitCodeProcess only reads, and TerminateProcess — the
+// call that would break the rule there — is in the forbidden list below.
 func TestNoProcessSignals(t *testing.T) {
 	root := filepath.Join("..", "..")
 	probe := "syscall.Kill(pid, 0)"
-	allowedFile := filepath.Join("internal", "source", "registry", "registry.go")
+	allowedFile := filepath.Join("internal", "source", "registry", "pidalive_unix.go")
 
-	needles := []string{".Process.Kill(", ".Process.Signal(", "syscall.Kill("}
+	// TerminateProcess is Windows' Process.Kill: the rule is about what
+	// agentpane does to other processes, not about which API spells it.
+	needles := []string{".Process.Kill(", ".Process.Signal(", "syscall.Kill(", "TerminateProcess("}
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
