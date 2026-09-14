@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 
 	"github.com/simoncoombes/agentpane/internal/installer"
 )
@@ -27,11 +26,14 @@ func cmdInstall(stderr io.Writer, args []string) int {
 	if err == nil {
 		return 0
 	}
-	// The script's exit codes are the contract (0 done, 1 refused, 2
-	// environment): pass them through rather than flattening them to 1.
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return ee.ExitCode()
+	// The exit codes are the contract (0 done, 1 refused, 2 environment):
+	// pass them through rather than flattening them to 1. Both
+	// implementations report one — an *exec.ExitError from the script on
+	// unix, an *installer.ExitError from the native path on Windows — so the
+	// interface is what is matched rather than either concrete type.
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return coded.ExitCode()
 	}
 	fmt.Fprintf(stderr, "agentpane install: %v\n", err)
 	return 2

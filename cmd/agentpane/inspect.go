@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/simoncoombes/agentpane/internal/installer"
 )
 
 // Level classifies a Finding for the doctor's ✔/⚠/✖ rendering.
@@ -94,24 +96,28 @@ var (
 	alertEvents      = []string{"Notification", "Stop"}
 )
 
+// The three recognizers below delegate to internal/installer rather than to
+// the regexes above.
+//
+// The regexes remain as the recorded form of install.sh's matchers, which
+// TestInstallShParity checks; what doctor needs is to recognize every entry
+// an installer WROTE, and on Windows that includes `C:\...\agentpane.exe
+// hook` and quoted paths, which those patterns cannot see. A doctor that
+// reports "not installed" about a working install sends people to reinstall
+// on top of one they already have.
+
 // isAgentpaneCmd reports whether cmd is ANY of agentpane's own entries —
 // forwarder or autopane (install.sh's is_agentpane, the uninstall matcher).
-func isAgentpaneCmd(cmd string) bool {
-	return agentpaneCmdRe.MatchString(strings.TrimSpace(cmd))
-}
+func isAgentpaneCmd(cmd string) bool { return installer.IsAgentpaneCmd(cmd) }
 
 // isAgentpaneHookCmd reports whether cmd is a forwarder entry, "agentpane
 // hook" (install.sh's is_hook) — the shape the 12-event coverage checks care
 // about.
-func isAgentpaneHookCmd(cmd string) bool {
-	return agentpaneHookCmdRe.MatchString(strings.TrimSpace(cmd))
-}
+func isAgentpaneHookCmd(cmd string) bool { return installer.IsHookCmd(cmd) }
 
 // isAutopaneCmd reports whether cmd is the auto-open entry, "agentpane
 // autopane" (install.sh's is_autopane).
-func isAutopaneCmd(cmd string) bool {
-	return agentpaneAutopaneRe.MatchString(strings.TrimSpace(cmd))
-}
+func isAutopaneCmd(cmd string) bool { return installer.IsAutopaneCmd(cmd) }
 
 // hookEntry is one type=command hook, in file order within its event.
 type hookEntry struct {
@@ -290,11 +296,11 @@ func InspectSettings(raw []byte, settingsPath, resolvedPath string, binaryPath s
 			dupes = append(dupes, fmt.Sprintf("%s (%d)", ev, len(apIdx)))
 		}
 		for _, i := range apIdx {
-			m := agentpaneHookCmdRe.FindStringSubmatch(strings.TrimSpace(es[i].cmd))
-			if m == nil || m[1] == "" {
+			prog := installer.CmdProgram(es[i].cmd)
+			if prog == "" || !strings.ContainsAny(prog, `/\`) {
 				continue // bare "agentpane hook": PATH-resolved, as the doctor snippet prescribes
 			}
-			binPath := expandTilde(m[1] + "agentpane")
+			binPath := expandTilde(prog)
 			if !filepath.IsAbs(binPath) {
 				continue // relative prefix: existence depends on the hook's cwd, not checkable
 			}
