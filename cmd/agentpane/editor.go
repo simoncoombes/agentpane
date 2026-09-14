@@ -30,8 +30,7 @@ func openInEditor(configEditor string, dbg *debugLog) func(path string) error {
 		}
 		go func() {
 			backend := currentBackend()
-			cmdline := "/bin/sh -c " + shellQuote(editor+" "+shellQuote(path))
-			if chain := tabCommands(backend, os.Getenv, cmdline); len(chain) > 0 {
+			if chain := tabCommands(backend, os.Getenv, editorRun(editor, path)); len(chain) > 0 {
 				if runPaneChain(chain, paneCmdTimeout) {
 					return
 				}

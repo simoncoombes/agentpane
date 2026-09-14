@@ -39,11 +39,12 @@ const (
 	backendTmux    = "tmux"
 	backendWezTerm = "wezterm"
 	backendKitty   = "kitty"
+	backendWT      = "wt" // Windows Terminal
 )
 
 // paneBackends are the names detectBackend can return, in the order they are
 // tried, for the messages that have to list them.
-var paneBackends = []string{backendITerm2, backendTmux, backendWezTerm, backendKitty}
+var paneBackends = []string{backendITerm2, backendTmux, backendWezTerm, backendKitty, backendWT}
 
 // envLookup is os.Getenv, injected so the detector is testable.
 type envLookup func(string) string
@@ -79,6 +80,15 @@ func detectBackend(env envLookup) string {
 	if env("KITTY_WINDOW_ID") != "" {
 		return backendKitty
 	}
+	// Windows Terminal last, and not only because it is the newest: it is the
+	// one backend that cannot address a specific pane (see splitCommands), so
+	// anything with real targeting should win the tie. Nothing sets both in
+	// practice — WT_SESSION is Windows Terminal's alone, and WezTerm on
+	// Windows sets WEZTERM_PANE and not WT_SESSION — so this only decides a
+	// case someone has constructed on purpose.
+	if env("WT_SESSION") != "" {
+		return backendWT
+	}
 	return backendNone
 }
 
@@ -92,7 +102,7 @@ func backendReason(env envLookup) string {
 		return fmt.Sprintf("AGENTPANE_TERMINAL=%q is not a backend name (want one of: none, %s)",
 			forced, strings.Join(paneBackends, ", "))
 	}
-	return fmt.Sprintf("TERM_PROGRAM=%q TERM=%q, and none of $TMUX/$WEZTERM_PANE/$KITTY_WINDOW_ID is set",
+	return fmt.Sprintf("TERM_PROGRAM=%q TERM=%q, and none of $TMUX/$WEZTERM_PANE/$KITTY_WINDOW_ID/$WT_SESSION is set",
 		env("TERM_PROGRAM"), env("TERM"))
 }
 
@@ -140,22 +150,49 @@ type paneCmd struct {
 	after [][]string
 }
 
+// paneRun is one invocation a new pane should start, carried in both the
+// spellings terminals ask for.
+//
+// The split is a platform boundary, not a style choice. A unix backend either
+// hands a command LINE to a shell it starts itself (iTerm2, tmux) or execs
+// /bin/sh explicitly (WezTerm, kitty), so `line` is the primary form and
+// `argv` wraps it. On Windows there is no shell worth going through, so
+// `argv` is the primary form and `line` is a rendering for --explain. Both
+// are built once, by panerun_unix.go or panerun_windows.go, so that no
+// backend below has to know how to quote for its platform.
+type paneRun struct {
+	line string   // a command line, for a terminal that runs it through a shell
+	argv []string // program and arguments, for a terminal that execs directly
+}
+
+// displayLine renders argv for a human-readable trace, quoting only what
+// needs it. It is never parsed or executed — see paneRun.line.
+func displayLine(argv []string) string {
+	out := make([]string, 0, len(argv))
+	for _, a := range argv {
+		if strings.ContainsAny(a, " \t\"") {
+			a = strconv.Quote(a)
+		}
+		out = append(out, a)
+	}
+	return strings.Join(out, " ")
+}
+
 // splitCommands is the command chain that splits the current pane vertically,
-// runs cmdline in the new pane at about cols columns wide, and leaves focus
+// runs the TUI in the new pane at about cols columns wide, and leaves focus
 // where it was. Entries are alternatives, tried in order until one succeeds;
 // nil means this backend cannot split from here.
 //
-// cmdline is already a complete `/bin/sh -c '…'` string (paneCommand), so
-// every backend hands it to a shell the same way and none of them has to
-// re-quote it.
-func splitCommands(backend string, env envLookup, cmdline string, cols int) []paneCmd {
+// run carries the invocation in both forms (see paneRun); each backend takes
+// the one its terminal wants, and none of them re-quotes anything.
+func splitCommands(backend string, env envLookup, run paneRun, cols int) []paneCmd {
 	switch backend {
 	case backendITerm2:
 		uuid := iTermPaneUUID(env)
 		if uuid == "" {
 			return nil
 		}
-		return []paneCmd{{argv: paneArgv(env, "osascript", "-e", autopaneScript(uuid, autopaneProfile(), cmdline))}}
+		return []paneCmd{{argv: paneArgv(env, "osascript", "-e", autopaneScript(uuid, autopaneProfile(), run.line))}}
 
 	case backendTmux:
 		target := env("TMUX_PANE")
@@ -176,12 +213,12 @@ func splitCommands(backend string, env envLookup, cmdline string, cols int) []pa
 				"split-window", "-h", "-d",
 				"-l", strconv.Itoa(cols),
 				"-t", target,
-				cmdline,
+				run.line,
 			)},
 			{argv: paneArgv(env, "tmux",
 				"split-window", "-h", "-d",
 				"-t", target,
-				cmdline,
+				run.line,
 			)},
 		}
 
@@ -193,12 +230,11 @@ func splitCommands(backend string, env envLookup, cmdline string, cols int) []pa
 		// wezterm has no "split without focusing", so focus is taken and
 		// handed straight back as a follow-up.
 		return []paneCmd{{
-			argv: paneArgv(env, "wezterm",
+			argv: append(paneArgv(env, "wezterm",
 				"cli", "split-pane",
 				"--pane-id", target,
 				"--right", "--cells", strconv.Itoa(cols),
-				"--", "/bin/sh", "-c", cmdline,
-			),
+				"--"), run.argv...),
 			after: [][]string{paneArgv(env, "wezterm", "cli", "activate-pane", "--pane-id", target)},
 		}}
 
@@ -206,18 +242,97 @@ func splitCommands(backend string, env envLookup, cmdline string, cols int) []pa
 		// kitty's remote control is off by default (allow_remote_control in
 		// kitty.conf), and the launcher was renamed from `kitty @` to
 		// `kitten @` in 0.29 — hence two alternatives.
-		args := []string{
+		args := append([]string{
 			"@", "launch",
 			"--type=window", "--location=vsplit",
 			"--cwd=current", "--dont-take-focus",
-			"/bin/sh", "-c", cmdline,
-		}
+		}, run.argv...)
 		return []paneCmd{
 			{argv: paneArgv(env, "kitten", args...)},
 			{argv: paneArgv(env, "kitty", args...)},
 		}
+
+	case backendWT:
+		// Windows Terminal is the one backend with no pane addressing: `wt`
+		// has no equivalent of --pane-id, so `-w 0` (the most recently used
+		// window) splitting its ACTIVE pane is the whole targeting story.
+		// That is weaker than every other backend here and it is worth being
+		// plain about: if you start a session and immediately click into
+		// another pane of the same window, the split lands in the pane you
+		// clicked into. SessionStart fires within milliseconds of the
+		// session starting, so in practice the active pane is the session's
+		// own, but this is a race that iTerm2's uuid match does not have.
+		//
+		// -V splits with a VERTICAL divider, i.e. the new pane appears to the
+		// right — the same geometry as iTerm2's "split vertically" and the
+		// opposite of tmux's naming for it.
+		//
+		// --size takes a fraction of the parent, not a cell count, and needs
+		// Windows Terminal 1.7+; the second alternative drops it and accepts
+		// wt's own 50/50, the same bargain the tmux chain strikes for -l.
+		base := []string{"-w", "0", "split-pane", "-V"}
+		sized := base
+		if frac := wtSizeFraction(cols, consoleColumns()); frac != "" {
+			sized = append(append([]string{}, base...), "--size", frac)
+		}
+		cmd := wtEscape(run.argv)
+		alts := []paneCmd{{
+			argv: append(paneArgv(env, "wt", sized...), cmd...),
+			// wt always focuses the pane it creates, so focus is handed back
+			// the same way WezTerm's is. move-focus needs 1.13+; on an older
+			// build the split still lands and only the focus is wrong.
+			after: [][]string{paneArgv(env, "wt", "-w", "0", "move-focus", "left")},
+		}}
+		if len(sized) != len(base) {
+			alts = append(alts, paneCmd{
+				argv:  append(paneArgv(env, "wt", base...), cmd...),
+				after: [][]string{paneArgv(env, "wt", "-w", "0", "move-focus", "left")},
+			})
+		}
+		return alts
 	}
 	return nil
+}
+
+// wtEscape protects arguments from Windows Terminal's own command-line
+// parser, which splits on `;` to chain subcommands: an unescaped semicolon
+// anywhere in a path or argument would end the split-pane command and start a
+// new one. `\;` is wt's documented escape.
+func wtEscape(argv []string) []string {
+	out := make([]string, 0, len(argv))
+	for _, a := range argv {
+		out = append(out, strings.ReplaceAll(a, ";", `\;`))
+	}
+	return out
+}
+
+// wtSizeFraction renders the --size value that gives the new pane about cols
+// columns of a parent width columns wide, or "" when the width is unknown and
+// the caller should let wt split 50/50.
+//
+// The clamps are the same ones the iTerm2 AppleScript applies, for the same
+// reasons: never below the narrow layout, and never so wide that the session
+// pane drops under autopaneKeepColumns.
+func wtSizeFraction(cols, width int) string {
+	if width <= 0 || cols <= 0 {
+		return ""
+	}
+	want := cols
+	if want > width-autopaneKeepColumns {
+		want = width - autopaneKeepColumns
+	}
+	if want < autopaneMinColumns {
+		want = autopaneMinColumns
+	}
+	frac := float64(want) / float64(width)
+	// wt rejects a size outside (0,1), and either extreme is a useless pane.
+	if frac < 0.1 {
+		frac = 0.1
+	}
+	if frac > 0.9 {
+		frac = 0.9
+	}
+	return strconv.FormatFloat(frac, 'f', 2, 64)
 }
 
 // focusCommands moves focus from the agentpane pane to the session pane — the
@@ -252,27 +367,35 @@ func focusCommands(backend string, env envLookup) []paneCmd {
 			{argv: paneArgv(env, "kitten", "@", "focus-window", "--match", "neighbor:left")},
 			{argv: paneArgv(env, "kitty", "@", "focus-window", "--match", "neighbor:left")},
 		}
+
+	case backendWT:
+		// Aiming left rather than at a remembered pane, like every other
+		// backend, which suits wt especially well: it could not address a
+		// specific pane even if we had kept its id. Needs 1.13+.
+		return []paneCmd{{argv: paneArgv(env, "wt", "-w", "0", "move-focus", "left")}}
 	}
 	return nil
 }
 
-// tabCommands opens cmdline in a new tab or window — where `o` sends $EDITOR,
-// so a file never opens over the tree. nil means the backend cannot, and
+// tabCommands opens run in a new tab or window — where `o` sends $EDITOR, so
+// a file never opens over the tree. nil means the backend cannot, and
 // openInEditor falls back to the desktop opener.
-func tabCommands(backend string, env envLookup, cmdline string) []paneCmd {
+func tabCommands(backend string, env envLookup, run paneRun) []paneCmd {
 	switch backend {
 	case backendITerm2:
-		return []paneCmd{{argv: paneArgv(env, "osascript", "-e", iTermTabScript(cmdline))}}
+		return []paneCmd{{argv: paneArgv(env, "osascript", "-e", iTermTabScript(run.line))}}
 	case backendTmux:
-		return []paneCmd{{argv: paneArgv(env, "tmux", "new-window", cmdline)}}
+		return []paneCmd{{argv: paneArgv(env, "tmux", "new-window", run.line)}}
 	case backendWezTerm:
-		return []paneCmd{{argv: paneArgv(env, "wezterm", "cli", "spawn", "--", "/bin/sh", "-c", cmdline)}}
+		return []paneCmd{{argv: append(paneArgv(env, "wezterm", "cli", "spawn", "--"), run.argv...)}}
 	case backendKitty:
-		args := []string{"@", "launch", "--type=tab", "--cwd=current", "/bin/sh", "-c", cmdline}
+		args := append([]string{"@", "launch", "--type=tab", "--cwd=current"}, run.argv...)
 		return []paneCmd{
 			{argv: paneArgv(env, "kitten", args...)},
 			{argv: paneArgv(env, "kitty", args...)},
 		}
+	case backendWT:
+		return []paneCmd{{argv: append(paneArgv(env, "wt", "-w", "0", "new-tab"), wtEscape(run.argv)...)}}
 	}
 	return nil
 }
@@ -325,10 +448,20 @@ func runPaneOnce(argv []string, timeout time.Duration) bool {
 // the desktop uses. It opens somewhere other than this pane by definition, so
 // it satisfies the rule even though it cannot honour $EDITOR on every path.
 func desktopOpenCommands(editor, path string) []paneCmd {
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		return []paneCmd{
 			{argv: []string{"open", "-a", editor, path}},
 			{argv: []string{"open", path}},
+		}
+	case "windows":
+		// The editor first, then the shell association. `start` is a cmd
+		// builtin rather than a program, and its first quoted argument is
+		// taken as a window TITLE — hence the empty one, which is the
+		// documented way to say "no title, the next argument is the file".
+		return []paneCmd{
+			{argv: []string{editor, path}},
+			{argv: []string{"cmd", "/c", "start", "", path}},
 		}
 	}
 	return []paneCmd{
@@ -339,3 +472,13 @@ func desktopOpenCommands(editor, path string) []paneCmd {
 // currentBackend is detectBackend against the real environment, as a var so
 // tests and `doctor` share one entry point.
 var currentBackend = func() string { return detectBackend(os.Getenv) }
+
+// consoleColumns is the width of the terminal this process is attached to, or
+// 0 when that cannot be known.
+//
+// Only the Windows Terminal backend needs it, because `wt --size` takes a
+// FRACTION of the parent pane where every other backend takes a cell count.
+// It is a var for the same reason currentBackend is: splitCommands has to
+// stay a pure function of its inputs under test, and this is the one thing in
+// it that asks the operating system a question.
+var consoleColumns = platformConsoleColumns

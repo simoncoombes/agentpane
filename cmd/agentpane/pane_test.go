@@ -22,6 +22,26 @@ func fakeEnv(kv map[string]string) envLookup {
 	return func(k string) string { return kv[k] }
 }
 
+// testRun is the unix spelling of a pane invocation — what panerun_unix.go
+// builds — written out here so a backend test does not need an executable
+// path to construct one from. It is hardcoded rather than taken from
+// paneRunFor on purpose: these tests assert how each BACKEND assembles argv,
+// which is the same question on every platform, so pinning the input keeps
+// them from changing meaning when GOOS does.
+func testRun(cmdline string) paneRun {
+	return paneRun{line: cmdline, argv: []string{"/bin/sh", "-c", cmdline}}
+}
+
+// withConsoleColumns stubs the width probe for the duration of a test. Only
+// the Windows Terminal backend reads it, and on any other platform the real
+// one answers 0, so a test that wants a sized pane has to say so.
+func withConsoleColumns(t *testing.T, cols int) {
+	t.Helper()
+	prev := consoleColumns
+	consoleColumns = func() int { return cols }
+	t.Cleanup(func() { consoleColumns = prev })
+}
+
 func TestDetectBackend(t *testing.T) {
 	cases := []struct {
 		name string
@@ -37,6 +57,7 @@ func TestDetectBackend(t *testing.T) {
 			"TMUX": "/tmp/tmux-501/default,123,0", "TMUX_PANE": "%3"}, backendTmux},
 		{"wezterm", map[string]string{"WEZTERM_PANE": "0"}, backendWezTerm},
 		{"kitty", map[string]string{"KITTY_WINDOW_ID": "1"}, backendKitty},
+		{"Windows Terminal", map[string]string{"WT_SESSION": "d1e2f3-4567"}, backendWT},
 		{"Terminal.app", map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, backendNone},
 		{"Ghostty", map[string]string{"TERM_PROGRAM": "ghostty"}, backendNone},
 
@@ -46,6 +67,18 @@ func TestDetectBackend(t *testing.T) {
 		{"tmux inside iTerm2", map[string]string{
 			"TMUX": "/tmp/tmux-501/default,123,0", "TMUX_PANE": "%3",
 			"TERM_PROGRAM": "iTerm.app", "ITERM_SESSION_ID": "w0t0p0:UUID"}, backendTmux},
+
+		// Same rule on Windows: a WSL tmux hosted by Windows Terminal is a
+		// tmux pane, and wt would split the whole terminal around it.
+		{"tmux inside Windows Terminal", map[string]string{
+			"TMUX": "/tmp/tmux-1000/default,99,0", "TMUX_PANE": "%1",
+			"WT_SESSION": "d1e2f3-4567"}, backendTmux},
+
+		// WezTerm on Windows can address a pane by id; wt cannot. Nothing
+		// sets both in the wild, but if something did, the one that can aim
+		// should win.
+		{"wezterm beats Windows Terminal", map[string]string{
+			"WEZTERM_PANE": "2", "WT_SESSION": "d1e2f3-4567"}, backendWezTerm},
 
 		// The override beats detection in both directions.
 		{"forced off", map[string]string{
@@ -82,7 +115,7 @@ func TestSplitCommands(t *testing.T) {
 	const cmdline = "/bin/sh -c '/usr/local/bin/agentpane --session abc'"
 
 	t.Run("tmux sizes the pane and keeps focus", func(t *testing.T) {
-		chain := splitCommands(backendTmux, fakeEnv(map[string]string{"TMUX_PANE": "%7"}), cmdline, 64)
+		chain := splitCommands(backendTmux, fakeEnv(map[string]string{"TMUX_PANE": "%7"}), testRun(cmdline), 64)
 		got := argvOf(t, chain, 0)
 		for _, want := range []string{
 			"tmux split-window",
@@ -99,7 +132,7 @@ func TestSplitCommands(t *testing.T) {
 	})
 
 	t.Run("tmux falls back for versions without -l", func(t *testing.T) {
-		chain := splitCommands(backendTmux, fakeEnv(map[string]string{"TMUX_PANE": "%7"}), cmdline, 64)
+		chain := splitCommands(backendTmux, fakeEnv(map[string]string{"TMUX_PANE": "%7"}), testRun(cmdline), 64)
 		if len(chain) != 2 {
 			t.Fatalf("tmux chain has %d entries, want 2 (sized, then unsized)", len(chain))
 		}
@@ -109,13 +142,13 @@ func TestSplitCommands(t *testing.T) {
 	})
 
 	t.Run("tmux with no pane id cannot split", func(t *testing.T) {
-		if chain := splitCommands(backendTmux, fakeEnv(nil), cmdline, 64); chain != nil {
+		if chain := splitCommands(backendTmux, fakeEnv(nil), testRun(cmdline), 64); chain != nil {
 			t.Errorf("split without TMUX_PANE returned %v", chain)
 		}
 	})
 
 	t.Run("wezterm hands focus back", func(t *testing.T) {
-		chain := splitCommands(backendWezTerm, fakeEnv(map[string]string{"WEZTERM_PANE": "3"}), cmdline, 64)
+		chain := splitCommands(backendWezTerm, fakeEnv(map[string]string{"WEZTERM_PANE": "3"}), testRun(cmdline), 64)
 		got := argvOf(t, chain, 0)
 		for _, want := range []string{"wezterm cli split-pane", "--pane-id 3", "--right", "--cells 64"} {
 			if !strings.Contains(got, want) {
@@ -131,7 +164,7 @@ func TestSplitCommands(t *testing.T) {
 	})
 
 	t.Run("kitty tries kitten then kitty", func(t *testing.T) {
-		chain := splitCommands(backendKitty, fakeEnv(map[string]string{"KITTY_WINDOW_ID": "1"}), cmdline, 64)
+		chain := splitCommands(backendKitty, fakeEnv(map[string]string{"KITTY_WINDOW_ID": "1"}), testRun(cmdline), 64)
 		if len(chain) != 2 {
 			t.Fatalf("kitty chain has %d entries, want 2 (kitten, then kitty)", len(chain))
 		}
@@ -145,7 +178,7 @@ func TestSplitCommands(t *testing.T) {
 
 	t.Run("iterm2 strips the position prefix", func(t *testing.T) {
 		chain := splitCommands(backendITerm2, fakeEnv(map[string]string{
-			"ITERM_SESSION_ID": "w0t2p0:ABCD-1234"}), cmdline, 64)
+			"ITERM_SESSION_ID": "w0t2p0:ABCD-1234"}), testRun(cmdline), 64)
 		got := argvOf(t, chain, 0)
 		if !strings.Contains(got, `"ABCD-1234"`) {
 			t.Errorf("AppleScript does not target the stripped uuid:\n%s", got)
@@ -156,7 +189,7 @@ func TestSplitCommands(t *testing.T) {
 	})
 
 	t.Run("none splits nothing", func(t *testing.T) {
-		if chain := splitCommands(backendNone, fakeEnv(nil), cmdline, 64); chain != nil {
+		if chain := splitCommands(backendNone, fakeEnv(nil), testRun(cmdline), 64); chain != nil {
 			t.Errorf("backendNone returned %v", chain)
 		}
 	})
@@ -197,7 +230,7 @@ func TestFocusCommandsAimLeft(t *testing.T) {
 func TestTabCommands(t *testing.T) {
 	const cmdline = "/bin/sh -c 'vim /src/main.go'"
 	for _, backend := range paneBackends {
-		chain := tabCommands(backend, fakeEnv(nil), cmdline)
+		chain := tabCommands(backend, fakeEnv(nil), testRun(cmdline))
 		if len(chain) == 0 {
 			t.Errorf("%s: no way to open a tab", backend)
 			continue
@@ -206,7 +239,7 @@ func TestTabCommands(t *testing.T) {
 			t.Errorf("%s tab command loses the editor command:\n%s", backend, got)
 		}
 	}
-	if chain := tabCommands(backendNone, fakeEnv(nil), cmdline); chain != nil {
+	if chain := tabCommands(backendNone, fakeEnv(nil), testRun(cmdline)); chain != nil {
 		t.Errorf("backendNone has a tab command: %v", chain)
 	}
 }
@@ -220,10 +253,10 @@ func TestPaneProgramOverride(t *testing.T) {
 		"KITTY_WINDOW_ID": "1",
 		"AGENTPANE_KITTY": "/opt/fake/kitty",
 	})
-	if got := splitCommands(backendTmux, env, "cmd", 64)[0].argv[0]; got != "/opt/fake/tmux" {
+	if got := splitCommands(backendTmux, env, testRun("cmd"), 64)[0].argv[0]; got != "/opt/fake/tmux" {
 		t.Errorf("AGENTPANE_TMUX ignored: %q", got)
 	}
-	chain := splitCommands(backendKitty, env, "cmd", 64)
+	chain := splitCommands(backendKitty, env, testRun("cmd"), 64)
 	if got := chain[0].argv[0]; got != "kitten" {
 		t.Errorf("kitten should be untouched by AGENTPANE_KITTY: %q", got)
 	}
@@ -300,5 +333,108 @@ func TestBackendReason(t *testing.T) {
 	got = backendReason(fakeEnv(map[string]string{"AGENTPANE_TERMINAL": "iterm"}))
 	if !strings.Contains(got, "iterm") || !strings.Contains(got, "wezterm") {
 		t.Errorf("an override typo must quote it and list the valid names: %s", got)
+	}
+}
+
+// TestSplitCommandsWindowsTerminal covers the one backend that sizes a pane
+// as a FRACTION rather than in cells, and the one that cannot name the pane
+// it splits. Everything asserted here is the argv, not the outcome: whether
+// Windows Terminal accepts it is a claim about wt's CLI, recorded in
+// docs/TERMINALS.md, not something this can settle.
+func TestSplitCommandsWindowsTerminal(t *testing.T) {
+	const cmdline = "C:\\Users\\x\\agentpane.exe --session abc"
+	env := fakeEnv(map[string]string{"WT_SESSION": "d1e2f3-4567"})
+
+	t.Run("sizes against the console width", func(t *testing.T) {
+		withConsoleColumns(t, 200)
+		chain := splitCommands(backendWT, env, testRun(cmdline), 64)
+		got := argvOf(t, chain, 0)
+		for _, want := range []string{
+			"wt -w 0 split-pane",
+			"-V",          // vertical divider: the new pane lands on the right
+			"--size 0.32", // 64 of 200 columns
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("wt split missing %q:\n%s", want, got)
+			}
+		}
+	})
+
+	t.Run("hands focus back", func(t *testing.T) {
+		withConsoleColumns(t, 200)
+		chain := splitCommands(backendWT, env, testRun(cmdline), 64)
+		if len(chain[0].after) != 1 {
+			t.Fatalf("wt split has %d follow-ups, want 1 (wt always focuses the new pane)", len(chain[0].after))
+		}
+		if got := strings.Join(chain[0].after[0], " "); !strings.Contains(got, "move-focus left") {
+			t.Errorf("the follow-up does not move focus back:\n%s", got)
+		}
+	})
+
+	t.Run("falls back for versions without --size", func(t *testing.T) {
+		withConsoleColumns(t, 200)
+		chain := splitCommands(backendWT, env, testRun(cmdline), 64)
+		if len(chain) != 2 {
+			t.Fatalf("wt chain has %d entries, want 2 (sized, then unsized)", len(chain))
+		}
+		if got := argvOf(t, chain, 1); strings.Contains(got, "--size") {
+			t.Errorf("the fallback still passes --size, so pre-1.7 wt still rejects it:\n%s", got)
+		}
+	})
+
+	t.Run("omits --size when the width is unknown", func(t *testing.T) {
+		withConsoleColumns(t, 0)
+		chain := splitCommands(backendWT, env, testRun(cmdline), 64)
+		if len(chain) != 1 {
+			t.Fatalf("wt chain has %d entries, want 1 — with no width there is no sized variant to fall back from", len(chain))
+		}
+		if got := argvOf(t, chain, 0); strings.Contains(got, "--size") {
+			t.Errorf("--size rendered without a width to divide by:\n%s", got)
+		}
+	})
+
+	// wt splits its own command line on ";" to chain subcommands, so an
+	// unescaped one in a path would end split-pane and start something else.
+	t.Run("escapes semicolons", func(t *testing.T) {
+		withConsoleColumns(t, 200)
+		run := paneRun{line: "x", argv: []string{"C:\\odd;dir\\agentpane.exe", "--session", "a;b"}}
+		got := argvOf(t, splitCommands(backendWT, env, run, 64), 0)
+		if strings.Contains(got, "odd;dir") || strings.Contains(got, "a;b") {
+			t.Errorf("a semicolon reached wt unescaped, ending the command early:\n%s", got)
+		}
+		for _, want := range []string{`odd\;dir`, `a\;b`} {
+			if !strings.Contains(got, want) {
+				t.Errorf("wt split missing escaped %q:\n%s", want, got)
+			}
+		}
+	})
+}
+
+// TestWTSizeFraction pins the clamps, which are the same ones the iTerm2
+// AppleScript applies: never narrower than the narrow layout, and never so
+// wide that the session pane drops under what it needs to stay readable.
+func TestWTSizeFraction(t *testing.T) {
+	cases := []struct {
+		name       string
+		cols       int
+		width      int
+		want       string
+		wantReason string
+	}{
+		{"a roomy window gets what it asks for", 64, 200, "0.32", "64/200"},
+		{"an unknown width sizes nothing", 64, 0, "", "wt splits 50/50 instead"},
+		{"no request sizes nothing", 0, 200, "", "nothing to divide"},
+		// 120 wide: 64 would leave the session 56, under the 80 it keeps, so
+		// the pane yields down to 44 — the narrow layout, its floor.
+		{"a narrow window yields to the session", 64, 120, "0.37", "44/120, the narrow layout floor"},
+		// 100 wide: keeping 80 would leave 20, below the floor, so the floor
+		// wins and the session takes the squeeze instead.
+		{"the floor beats the session's reserve", 64, 100, "0.44", "44/100"},
+	}
+	for _, c := range cases {
+		if got := wtSizeFraction(c.cols, c.width); got != c.want {
+			t.Errorf("%s: wtSizeFraction(%d, %d) = %q, want %q (%s)",
+				c.name, c.cols, c.width, got, c.want, c.wantReason)
+		}
 	}
 }
