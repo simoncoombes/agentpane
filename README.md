@@ -24,8 +24,8 @@ agentpane install
 
 A binary into `~/.local/bin`, then the hooks into `~/.claude/settings.json`. The
 installer shows you the diff and asks first. Add `--autopane` and the pane opens
-itself with every session, in iTerm2, tmux, WezTerm or kitty. Undo it all with
-`agentpane install --uninstall`.
+itself with every session, in iTerm2, tmux, WezTerm, kitty or Windows Terminal.
+Undo it all with `agentpane install --uninstall`.
 
 Then run `agentpane` in a second pane next to your session.
 
@@ -34,6 +34,11 @@ Then run `agentpane` in a second pane next to your session.
 * `go install github.com/simoncoombes/agentpane/cmd/agentpane@latest` if you
   would rather build it.
 * `agentpane --source codex` watches an OpenAI Codex run instead.
+
+On **Windows**, `get.sh` is not the route — `go install` it, or unzip a
+release — and then `agentpane install --autopane` works the same from
+PowerShell, splitting Windows Terminal. See
+[docs/INSTALL.md](docs/INSTALL.md#windows).
 
 ## The marks
 

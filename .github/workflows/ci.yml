@@ -39,6 +39,14 @@ jobs:
       - name: go build
         run: go build ./...
 
+      # The Windows backends and installer compile only under GOOS=windows,
+      # and a break there is cheapest to find here rather than on the Windows
+      # runner below. Vet covers the tests too.
+      - name: cross-compile for Windows
+        run: |
+          GOOS=windows GOARCH=amd64 go vet ./...
+          GOOS=windows GOARCH=arm64 go build ./...
+
       # -race because the sources are goroutines feeding a channel the UI
       # drains, which is exactly the shape a race detector is for.
       - name: go test
@@ -67,3 +75,56 @@ jobs:
           if sh tools/make-demo-project.sh "${RUNNER_TEMP}" 2>/dev/null; then
             echo "the scaffold overwrote a directory it did not create"; exit 1
           fi
+
+  windows:
+    # Windows gets its own job rather than a third matrix entry: the steps
+    # above run install.sh, get.sh and the demo scaffold, which are POSIX
+    # shell and are not what Windows installs with. What is left is what
+    # Windows actually has to get right — the native installer (internal/
+    # installer), the Windows Terminal backend, and the process and console
+    # probes that stand in for ps(1) and a controlling tty.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: gofmt
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # No -race here: the detector needs a C toolchain on Windows, and the
+      # races worth catching are in the sources, which are the same code on
+      # every platform and already run under -race in the job above. What this
+      # job is for is the code that only compiles here.
+      - name: go test
+        run: go test ./...
+
+      # The one thing only this runner can answer: does the binary it just
+      # built actually start, and does the installer's preview path run end
+      # to end against a settings file? --dry-run writes nothing.
+      - name: smoke test
+        shell: bash
+        run: |
+          go build -o agentpane.exe ./cmd/agentpane
+          ./agentpane.exe version
+          ./agentpane.exe doctor || true
+          printf '{\n  "theme": "dark"\n}\n' > "${RUNNER_TEMP}/settings.json"
+          ./agentpane.exe install --dry-run --autopane \
+            --binary agentpane.exe \
+            --settings "${RUNNER_TEMP}/settings.json"
+          grep -q '"theme": "dark"' "${RUNNER_TEMP}/settings.json" \
+            || { echo "--dry-run modified the settings file"; exit 1; }
