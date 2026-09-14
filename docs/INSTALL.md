@@ -20,15 +20,38 @@ curl -fsSL https://raw.githubusercontent.com/simoncoombes/agentpane/main/get.sh 
 (default `~/.local/bin`). If you would rather see it before you run it, it is
 [get.sh](../get.sh) in this repository — 120 lines of POSIX sh.
 
-Releases carry darwin and linux, arm64 and amd64. Anything else builds from
+Releases carry darwin and linux as `.tar.gz`, and windows as a `.zip` holding
+`agentpane.exe`; all four are arm64 and amd64. Anything else builds from
 source with `go install`.
+
+### Windows
+
+`get.sh` is POSIX sh, so it is not the Windows route. Either download the
+`_windows_amd64.zip` from the [releases
+page](https://github.com/simoncoombes/agentpane/releases), unzip it somewhere
+on your `PATH`, or build it:
+
+```powershell
+go install github.com/simoncoombes/agentpane/cmd/agentpane@latest
+```
+
+That lands `agentpane.exe` in `%USERPROFILE%\go\bin`, which `agentpane
+install` looks in if the binary is not on `PATH`. Everything after this point
+works the same in PowerShell as it does in a POSIX shell.
 
 ## The installer
 
-`agentpane install` wires the hooks into `~/.claude/settings.json` for you.
-It is the same program as `./install.sh` in this repository — the script is
-embedded in the binary, so a downloaded binary needs no clone and there is no
-second implementation to keep correct. Every flag below works either way.
+`agentpane install` wires the hooks into `~/.claude/settings.json` for you
+(`%USERPROFILE%\.claude\settings.json` on Windows).
+
+On macOS and Linux it is the same program as `./install.sh` in this repository
+— the script is embedded in the binary, so a downloaded binary needs no clone
+and there is no second implementation to keep correct. Windows has neither
+bash nor the python3 the script uses for all its JSON handling, so there the
+same surgery is done natively in Go. Same flags, same warnings, same plan and
+diff, same exit codes; the differences are that the hook command names
+`agentpane.exe` (quoted if its path contains a space), and that `--yes` is
+required when stdin is not a console rather than not a tty.
 
 It
 finds the binary, inspects your existing settings first (symlinked dotfiles
@@ -54,8 +77,8 @@ agentpane install --print-snippet # just the JSON, for manual pasting
 Other flags: `--yes` (skip the prompt; required when stdin is not a tty),
 `--binary PATH` (defaults to the running executable), `--settings PATH`.
 
-Exit codes are the script's: 0 done or nothing to do, 1 you refused, 2 the
-environment is wrong.
+Exit codes are the script's on every platform: 0 done or nothing to do, 1 you
+refused, 2 the environment is wrong.
 
 The same inspection is available permanently, read-only, as the "competing
 settings" section of `agentpane doctor`: symlinked/managed settings (including
@@ -78,8 +101,10 @@ interactive Claude Code session splits the pane it started in and runs the
 agentpane TUI in the new pane, with no arrangement to restore and no manual
 split.
 
-This works in iTerm2, tmux, WezTerm and kitty. [TERMINALS.md](TERMINALS.md)
-covers what each one needs and how the terminal is detected;
+This works in iTerm2, tmux, WezTerm, kitty and Windows Terminal — so
+PowerShell in Windows Terminal gets the same split-on-session-start that
+iTerm2 does. [TERMINALS.md](TERMINALS.md) covers what each one needs, how the
+terminal is detected, and the two Windows caveats worth knowing;
 [ITERM2.md](ITERM2.md) is the longer iTerm2 walkthrough, including the
 profiles and the no-hooks alternative.
 
@@ -90,22 +115,27 @@ only when ALL of these hold, and skips silently otherwise:
   (`clear`/`compact`/`fork` re-fire mid-session and never open panes);
 - `AGENTPANE_AUTOPANE` is not `"0"` — the kill switch: `export
   AGENTPANE_AUTOPANE=0` disables auto-open without uninstalling;
-- the session runs in a terminal agentpane can split, and one that names the
-  pane it is in: iTerm2, tmux, WezTerm or kitty. See
-  [TERMINALS.md](TERMINALS.md) for the environment variables each is detected
-  by, and for `AGENTPANE_TERMINAL`, which overrides the detection;
+- the session runs in a terminal agentpane can split: iTerm2, tmux, WezTerm,
+  kitty or Windows Terminal. All but the last also name the pane they are in;
+  see [TERMINALS.md](TERMINALS.md) for the environment variables each is
+  detected by, for what Windows Terminal does instead, and for
+  `AGENTPANE_TERMINAL`, which overrides the detection;
 - the session is not nested inside another Claude session
-  (`CLAUDE_CODE_CHILD_SESSION` unset);
-- the `claude` process has a controlling terminal (a fully headless run —
-  cron, launchd, CI, a detached pipeline — gets no pane; note that
-  `claude -p` typed into a terminal still has one, so use the kill switch
-  around scripted `-p` loops);
+  (`CLAUDE_CODE_CHILD_SESSION` unset; on Windows, no second `claude` above it
+  in the process tree);
+- the `claude` process has a controlling terminal — on Windows, a console (a
+  fully headless run — cron, launchd, a service, Task Scheduler, CI, a
+  detached pipeline — gets no pane; note that `claude -p` typed into a
+  terminal still has one, so use the kill switch around scripted `-p` loops);
 - no agentpane TUI is already attached to the session (its socket exists);
 - a per-session lockfile wasn't just taken by a duplicate event (stale locks
   older than 1h are reclaimed).
 
 The new pane is `AGENTPANE_COLUMNS` wide (default 64, floored at 44, and never
-so wide that the session pane drops below 80). On iTerm2 it uses the profile
+so wide that the session pane drops below 80). Windows Terminal sizes panes as
+a fraction of the parent rather than in columns, so there the width is
+converted against the console's own width and the same floors applied; a
+`wt` older than 1.7 has no `--size` at all and splits 50/50. On iTerm2 it uses the profile
 named by `AGENTPANE_PROFILE` (default `AgentPane`, the one docs/ITERM2.md ships
 via Dynamic Profiles) and falls back to the current session's own profile when
 that one does not exist.
@@ -113,7 +143,8 @@ that one does not exist.
 When nothing happens, `agentpane autopane --explain` runs the same guard chain
 against your current environment and prints a verdict per guard, opening
 nothing. To see the same trace from a real hook firing, run `agentpane autopane
---debug-on` and read `~/.local/state/agentpane/autopane.log`.
+--debug-on` and read `~/.local/state/agentpane/autopane.log`
+(`%USERPROFILE%\.local\state\agentpane\autopane.log` on Windows).
 
 **Autopane panes are pinned.** The pane runs `agentpane --session <id>` by
 absolute binary path, with the session id from the SessionStart payload, so

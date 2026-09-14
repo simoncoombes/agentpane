@@ -14,8 +14,17 @@ agentpane --demo          # the whole UI with no Claude Code session at all
 ```
 
 Go 1.26 or newer. There is no code generation step, no linter beyond `go vet`
-and `gofmt`, and the only dependencies are bubbletea, runewidth and a TOML
-parser.
+and `gofmt`, and the only dependencies are bubbletea, runewidth, a TOML parser
+and `golang.org/x/sys` (Windows only: the console and process-table calls the
+standard library's `syscall` package does not export).
+
+Changing anything under `cmd/agentpane` or `internal/installer` means checking
+both platforms, because several files are split by build tag:
+
+```sh
+go test ./...
+GOOS=windows go vet ./...      # compiles the Windows halves and their tests
+```
 
 ## The shape of the thing
 
@@ -25,8 +34,13 @@ Data flows one way and never turns around:
 source ──events──▶ state.Machine ──World──▶ renderFrame ──▶ terminal
 ```
 
-- **`internal/installer`** — the hook installer, a bash script embedded in
-  the binary with `go:embed` so a downloaded binary can wire itself up.
+- **`internal/installer`** — the hook installer. On unix a bash script
+  embedded with `go:embed`, so a downloaded binary can wire itself up. On
+  Windows, which has neither bash nor python3, the same surgery natively:
+  `hooks.go` decides what changes (pure, tested everywhere), `ojson.go` writes
+  settings.json back without reordering anybody's keys, `diff.go` renders the
+  preview, and `installer_windows.go` does the I/O. `TestHookPatternParity`
+  and `tests/install_test.sh` are what keep the two from drifting.
 - **`internal/event`** — the event taxonomy and the `Source` interface. Every
   platform enters here and nothing outside the taxonomy reaches the machine.
 - **`internal/source/*`** — one package per channel: `hooksrc` (a unix socket

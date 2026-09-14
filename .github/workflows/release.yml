@@ -41,7 +41,23 @@ jobs:
               -C "$GITHUB_WORKSPACE" LICENSE README.md
             rm dist/agentpane
           done
-          cd dist && sha256sum *.tar.gz > checksums.txt
+          # Windows ships as a zip with a .exe inside: a tar.gz of a
+          # Unix-named binary is not something a Windows user can act on, and
+          # get.sh (which unpacks the tarballs) does not run there anyway.
+          for target in windows/amd64 windows/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            echo "building $os/$arch"
+            GOOS="$os" GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.Version=${version}" \
+              -o "dist/agentpane.exe" ./cmd/agentpane
+            (cd dist && zip -q "agentpane_${version}_${os}_${arch}.zip" agentpane.exe \
+              && cd "$GITHUB_WORKSPACE" \
+              && zip -q -j "dist/agentpane_${version}_${os}_${arch}.zip" LICENSE README.md)
+            rm dist/agentpane.exe
+          done
+
+          cd dist && sha256sum *.tar.gz *.zip > checksums.txt
           cat checksums.txt
 
       # gh is on the runner already: no third-party action gets a token.
@@ -52,4 +68,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes \
-            dist/*.tar.gz dist/checksums.txt
+            dist/*.tar.gz dist/*.zip dist/checksums.txt
