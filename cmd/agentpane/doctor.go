@@ -285,10 +285,13 @@ func doctorReport(w io.Writer, session string) int {
 	if backend == backendNone {
 		warn("terminal: no split backend — %s", backendReason(os.Getenv))
 		fmt.Fprintln(w, "    the TUI works here; auto-open (agentpane install --autopane) and ⇥ do not")
-		fmt.Fprintln(w, "    supported: iTerm2, tmux, WezTerm, kitty — see docs/TERMINALS.md")
+		fmt.Fprintln(w, "    supported: iTerm2, tmux, WezTerm, kitty, Windows Terminal — see docs/TERMINALS.md")
 		fmt.Fprintln(w, "    run agentpane in a second pane you split yourself, and answer prompts in the session pane")
 	} else {
-		chain := splitCommands(backend, os.Getenv, "agentpane", 64)
+		// A placeholder invocation: doctor only reads argv[0] of each
+		// alternative, to ask whether the program that drives the terminal is
+		// installed. What the new pane would run does not come into it.
+		chain := splitCommands(backend, os.Getenv, paneRunFor("agentpane", "", nil), 64)
 		var missing []string
 		for _, c := range chain {
 			if _, err := exec.LookPath(c.argv[0]); err != nil {

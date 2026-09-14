@@ -44,7 +44,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/simoncoombes/agentpane/internal/source/hooksrc"
@@ -70,10 +69,12 @@ const (
 	autopaneDialTimeout = 200 * time.Millisecond
 )
 
-// parentHasTTY reports whether pid has a controlling terminal, via
-// `ps -o tty= -p pid` (empty, "??" on macOS, or "?" on Linux → none). It is a
-// package var so tests can stub the decision while TestParentHasTTY probes
-// the real implementation against setsid-detached fixtures.
+// parentHasTTY reports whether pid is attached to a terminal. The
+// implementation is per-platform (autopane_unix.go asks ps(1) about the
+// controlling tty; autopane_windows.go asks whether a console is attached,
+// which is a slightly different question — see there). It is a package var so
+// tests can stub the decision while TestParentHasTTY probes the real one
+// against setsid-detached fixtures.
 //
 // Honest limits, established empirically (TestParentHasTTY): a
 // setsid-detached process — the state of a fully headless run under cron,
@@ -83,14 +84,7 @@ const (
 // stdin), so guard (e) does not filter that case; the AGENTPANE_AUTOPANE=0
 // kill switch does. Verified-by-inspection for the real `claude -p` process
 // shape — flagged for a live check after install.
-var parentHasTTY = func(pid int) bool {
-	out, err := exec.Command("ps", "-o", "tty=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return false
-	}
-	tty := strings.TrimSpace(string(out))
-	return tty != "" && tty != "??" && tty != "?"
-}
+var parentHasTTY = platformParentHasTTY
 
 // cmdAutopane implements `agentpane autopane`: read one SessionStart hook
 // JSON on stdin, decide, act, exit 0 ALWAYS — even on panic — because a
@@ -327,8 +321,8 @@ func runAutopaneMode(stdin io.Reader, extraArgs []string, ppid int, explain io.W
 		}
 		return
 	}
-	cmdline := paneCommand(exe, p.SessionID, extraArgs)
-	chain := splitCommands(backend, os.Getenv, cmdline, autopaneColumns())
+	run := paneRunFor(exe, p.SessionID, extraArgs)
+	chain := splitCommands(backend, os.Getenv, run, autopaneColumns())
 	if len(chain) == 0 {
 		autopaneSkip(explain, "act: the %s backend has no pane to target from here", backend)
 		if !dry {
@@ -338,7 +332,7 @@ func runAutopaneMode(stdin io.Reader, extraArgs []string, ppid int, explain io.W
 	}
 	if dry {
 		fmt.Fprintf(explain, "\nWOULD OPEN a %s pane %d columns wide, running %s\n",
-			backend, autopaneColumns(), cmdline)
+			backend, autopaneColumns(), run.line)
 		for _, c := range chain {
 			fmt.Fprintf(explain, "via %s\n", summariseArgv(c.argv))
 			if _, err := exec.LookPath(c.argv[0]); err != nil {
@@ -379,10 +373,17 @@ const (
 )
 
 // autopaneSocketState dials the socket to learn whether a TUI actually
-// listens there. ECONNREFUSED (or a non-socket file squatting on the path)
-// means a dead leftover → stale; a vanished file means absent; any other
-// dial failure is treated as live — the conservative reading, since a wrong
-// "stale" risks a second pane while a wrong "live" only skips this event.
+// listens there. A refused connection (or a non-socket file squatting on the
+// path) means a dead leftover → stale; a vanished file means absent; any
+// other dial failure is treated as live — the conservative reading, since a
+// wrong "stale" risks a second pane while a wrong "live" only skips this
+// event.
+//
+// "Refused" is asked per-platform (dialRefused). It has to be: Windows
+// answers a refused connect with WSAECONNREFUSED, while syscall.ECONNREFUSED
+// there is a placeholder value the OS never returns — comparing against it
+// would read every stale socket as live and quietly disable auto-open for
+// that session id for good.
 func autopaneSocketState(path string) socketState {
 	if _, err := os.Lstat(path); err != nil {
 		return socketAbsent
@@ -392,11 +393,11 @@ func autopaneSocketState(path string) socketState {
 		conn.Close()
 		return socketLive
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOTSOCK) {
-		return socketStale
-	}
 	if errors.Is(err, os.ErrNotExist) {
 		return socketAbsent
+	}
+	if dialRefused(err) {
+		return socketStale
 	}
 	return socketLive
 }
@@ -665,13 +666,12 @@ func autopaneDebugToggle(on bool) {
 // DATA-SOURCES §4.1 describes.
 //
 // `ps eww` prints a process's environment (same-user processes only, which is
-// always our case). When the environment cannot be read the answer is "not
-// nested": a false skip breaks the feature entirely, while a false open costs
-// one extra pane in a rare nested session.
-var parentIsNestedClaude = func(pid int) bool {
-	out, err := exec.Command("ps", "eww", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), "CLAUDE_CODE_CHILD_SESSION=")
-}
+// always our case); autopane_windows.go cannot read another process's
+// environment without a great deal of unsafe code, so it answers the same
+// question structurally instead, by looking for a second claude above this
+// one in the process tree.
+//
+// Either way, when the answer cannot be established it is "not nested": a
+// false skip breaks the feature entirely, while a false open costs one extra
+// pane in a rare nested session.
+var parentIsNestedClaude = platformParentIsNestedClaude
