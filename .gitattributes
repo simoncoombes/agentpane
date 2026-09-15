@@ -1,0 +1,15 @@
+# Everything in this repository is LF, in the index and in every working tree.
+#
+# Git for Windows defaults to core.autocrlf=true, which converts on checkout.
+# That is not a cosmetic difference here: gofmt reports a CRLF file as
+# unformatted, so a Windows checkout fails the format check on every .go file
+# in the repository including ones nobody has touched, and install.sh and
+# get.sh are not runnable with CRLF line endings at all.
+#
+# eol=lf settles it for good, and unlike a core.autocrlf setting in CI it also
+# covers anyone who clones this on Windows to work on it.
+* text=auto eol=lf
+
+# Binary, so that "text=auto" never has to guess about them.
+*.gif binary
+*.png binary
