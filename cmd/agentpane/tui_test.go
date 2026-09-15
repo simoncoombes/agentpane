@@ -154,7 +154,7 @@ func writeRegistrySession(t *testing.T, dir string, pid int, sessionID, cwd stri
 // transcript directory it computes cannot exist.
 func newTestAttacher(t *testing.T, ctx context.Context, regDir string) *attacher {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	setFakeHome(t, t.TempDir())
 	return &attacher{
 		appCtx: ctx,
 		out:    make(chan event.Event, 256),

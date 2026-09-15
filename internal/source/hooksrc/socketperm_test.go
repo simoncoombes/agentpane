@@ -3,6 +3,7 @@ package hooksrc
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -10,6 +11,14 @@ import (
 // carries prompts, tool inputs and file paths out of the session. Default
 // socket permissions would let any local user connect to it.
 func TestSocketIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Mode bits are not the mechanism there. os.Chmod only toggles the
+		// read-only attribute on Windows, so the socket reads as 0666 however
+		// it was created; what actually restricts it is the ACL on the
+		// directory, and os.TempDir is %LOCALAPPDATA%\Temp — already private
+		// to the user, unlike the /tmp this test exists because of.
+		t.Skip("file mode does not carry permissions on Windows; the per-user temp directory's ACL does")
+	}
 	// Not t.TempDir(): its path plus a socket name overruns the 104-byte
 	// sun_path limit on darwin.
 	dir, err := os.MkdirTemp("", "ap")

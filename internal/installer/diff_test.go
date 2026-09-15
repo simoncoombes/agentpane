@@ -38,8 +38,9 @@ sys.stdout.write("".join(difflib.unified_diff(
 		if err != nil {
 			t.Fatalf("%s: python3: %v", c.name, err)
 		}
-		if got != string(out) {
-			t.Errorf("%s:\n go:\n%s\n py:\n%s", c.name, got, string(out))
+		// sys.stdout.write translates \n to \r\n on Windows; see normalizeEOL.
+		if want := normalizeEOL(string(out)); got != want {
+			t.Errorf("%s:\n go:\n%s\n py:\n%s", c.name, got, want)
 		}
 	}
 }

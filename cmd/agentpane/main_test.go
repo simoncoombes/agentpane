@@ -79,7 +79,7 @@ func TestHookSnippet(t *testing.T) {
 // under a temp HOME).
 func TestInstalledHookEvents(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setFakeHome(t, home)
 	dir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -524,7 +524,7 @@ func TestRenderOnceFrame(t *testing.T) {
 // environment and always emit the accent reasoning, the glyph sample, and
 // the honesty lines.
 func TestDoctorRuns(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setFakeHome(t, t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var out bytes.Buffer
@@ -644,7 +644,7 @@ type cfgLike struct {
 // looking at, as if it were "the" answer.
 func TestDoctorSessionAware(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setFakeHome(t, home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	sessDir := filepath.Join(home, ".claude", "sessions")

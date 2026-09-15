@@ -59,11 +59,11 @@ func setupAutopaneEnv(t *testing.T) (argvFile string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(tmp) })
-	t.Setenv("TMPDIR", tmp+"/") // os.TempDir(), hooksrc.SocketPath, the lock
+	setFakeTemp(t, tmp+"/") // os.TempDir(), hooksrc.SocketPath, the lock
 	// HOME too: the autopane debug marker lives under ~/.local/state, and a
 	// real one on the developer's machine would otherwise divert these runs
 	// down the traced path (and append to their live log).
-	t.Setenv("HOME", tmp)
+	setFakeHome(t, tmp)
 	argvFile = filepath.Join(tmp, "osascript-argv.txt")
 	fake := filepath.Join(tmp, "fake-osascript")
 	writeFakeProgram(t, fake, "printf '%s\\n' \"$@\" > \"$AUTOPANE_TEST_ARGV\"\n")
@@ -464,7 +464,7 @@ func TestAutopaneAbandon(t *testing.T) {
 // TestAutopaneLockPathHostile: a hostile session id cannot escape TempDir.
 func TestAutopaneLockPathHostile(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp+"/")
+	setFakeTemp(t, tmp)
 	p := autopaneLockPath("../../etc/x")
 	if filepath.Dir(p) != filepath.Clean(tmp) {
 		t.Fatalf("lock path escaped TempDir: %s", p)
