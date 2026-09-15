@@ -241,12 +241,12 @@ func TestLineMapping(t *testing.T) {
 			},
 		},
 		{
-			name: "turn_duration system line hints SessionIdle",
+			name: "turn_duration system line is a turn end, not an idle session",
 			lines: []string{
 				fmt.Sprintf(`{"type":"system","subtype":"turn_duration","timestamp":%q,"sessionId":"sess1","durationMs":5000}`, ts1),
 			},
 			want: []want{
-				{kind: event.SessionIdle, agent: "main", detail: "turn_duration"},
+				{kind: event.TurnEnded, agent: "main", detail: "turn_duration"},
 			},
 		},
 	}
@@ -400,15 +400,15 @@ func TestMalformedLinesSkippedWithoutPanic(t *testing.T) {
 	}
 }
 
-func TestTurnDurationInAgentFileIsNotSessionIdle(t *testing.T) {
+func TestTurnDurationInAgentFileIsNotATurnEnd(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "sess1", "subagents")
 	writeLines(t, filepath.Join(sub, "agent-"+agentA+".jsonl"),
 		fmt.Sprintf(`{"type":"system","subtype":"turn_duration","timestamp":%q,"durationMs":100}`, ts1))
 	s := newSource(t, dir)
 	for _, g := range mapped(s.scan()) {
-		if g.Kind == event.SessionIdle {
-			t.Error("agent-file turn_duration must not emit SessionIdle")
+		if g.Kind == event.TurnEnded || g.Kind == event.SessionIdle {
+			t.Errorf("agent-file turn_duration emitted %v; only the main file ends the session's turn", g.Kind)
 		}
 	}
 }

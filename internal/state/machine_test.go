@@ -905,3 +905,63 @@ func TestEndedSessionStaysEnded(t *testing.T) {
 		t.Fatalf("session state = %v after a straggler call, want ended", got)
 	}
 }
+
+// --- a turn end is not an idle session (TurnEnded) ---
+
+// TestTurnEndSettlesTheRunButNotTheSession: the transcript's turn_duration
+// line settles the run, which is what it is evidence of, and leaves the
+// session active. The session state drives a whole-layout swap to the idle
+// screen, and a background job that pauses between turns has not finished
+// anything the reader needs summarised.
+func TestTurnEndSettlesTheRunButNotTheSession(t *testing.T) {
+	f := newFix()
+	f.apply(0, event.SessionStart, event.MainAgentID)
+	f.apply(time.Second, event.UserPromptSubmitted, event.MainAgentID, withDetail("do the thing"))
+	f.spawnRun(2*time.Second, "a1")
+	f.apply(3*time.Second, event.AgentReturned, "a1")
+
+	if w := f.m.Snapshot(); w.Run == nil {
+		t.Fatal("no run in flight after a prompt")
+	}
+	f.apply(4*time.Second, event.TurnEnded, event.MainAgentID, withDetail("turn_duration"))
+
+	w := f.m.Snapshot()
+	if w.Run != nil {
+		t.Error("the run is still open after the turn ended")
+	}
+	if w.LastRun == nil {
+		t.Error("the finished run was not recorded")
+	}
+	if w.Session.State != SessionActive {
+		t.Errorf("session state = %v after a turn end, want active", w.Session.State)
+	}
+}
+
+// TestTurnEndWaitsForTheAgentsToLand: main finishing its turn does not settle
+// a run whose agents are still working, exactly as an idle session does not.
+func TestTurnEndWaitsForTheAgentsToLand(t *testing.T) {
+	f := newFix()
+	f.apply(0, event.SessionStart, event.MainAgentID)
+	f.apply(time.Second, event.UserPromptSubmitted, event.MainAgentID, withDetail("do the thing"))
+	f.spawnRun(2*time.Second, "a1")
+	f.apply(3*time.Second, event.TurnEnded, event.MainAgentID)
+
+	if f.m.Snapshot().Run == nil {
+		t.Fatal("the run was settled with an agent still running")
+	}
+	f.apply(4*time.Second, event.AgentReturned, "a1")
+	if f.m.Snapshot().Run != nil {
+		t.Error("the run did not settle once its last agent landed")
+	}
+}
+
+// TestRegistryIdleStillIdlesTheSession: the registry is the channel that knows
+// the CLI is waiting for a human, and it still drives the idle screen.
+func TestRegistryIdleStillIdlesTheSession(t *testing.T) {
+	f := newFix()
+	f.apply(0, event.SessionStart, event.MainAgentID)
+	f.apply(time.Second, event.SessionIdle, event.MainAgentID)
+	if got := f.m.Snapshot().Session.State; got != SessionIdle {
+		t.Errorf("session state = %v after the registry reported idle, want idle", got)
+	}
+}
