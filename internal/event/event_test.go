@@ -9,7 +9,7 @@ import "testing"
 // half the taxonomy.
 var sourceKinds = []Kind{
 	SourceConnected, SourceDisconnected,
-	SessionStart, SessionEnd, SessionIdle, UserPromptSubmitted,
+	SessionStart, SessionEnd, SessionIdle, TurnEnded, UserPromptSubmitted,
 	CompactStarted, CompactFinished, SessionTitled,
 	AgentSpawned, AgentStarted, AgentReturned, AgentMerged,
 	ToolStart, ToolEnd, ToolOutput, FileRead, FileEdited,

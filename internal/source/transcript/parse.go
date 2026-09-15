@@ -192,9 +192,11 @@ func (s *Source) lineEvents(st *fileState, raw []byte) []event.Event {
 		})}
 	case "system":
 		if ln.Subtype == "turn_duration" && st.agentID == event.MainAgentID {
-			// Turn ended → the root agent is back to awaiting input;
-			// a hint only (DATA-SOURCES §4.2).
-			return []event.Event{s.newEvent(event.SessionIdle, at, st.agentID, ln.SessionID, raw, func(e *event.Event) {
+			// The root agent finished a turn (DATA-SOURCES §4.2). That
+			// settles the run; it does not mean the session is waiting for a
+			// human, which is what this used to be read as and what the
+			// sessions registry actually knows.
+			return []event.Event{s.newEvent(event.TurnEnded, at, st.agentID, ln.SessionID, raw, func(e *event.Event) {
 				e.Detail = "turn_duration"
 			})}
 		}

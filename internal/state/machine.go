@@ -53,7 +53,10 @@ type Machine struct {
 	sessionState SessionState
 	// idleAt is when the last SessionIdle landed, so unidle can tell work
 	// that came after it from work that was already in flight before it.
-	idleAt    time.Time
+	idleAt time.Time
+	// turnEnded latches the transcript's turn end until the next prompt, so a
+	// run can settle without the session being called idle (checkRunEnd).
+	turnEnded bool
 	connected bool
 
 	main mainState
@@ -232,6 +235,7 @@ func (m *Machine) Reset(sessionID string) {
 	m.sessionID = sessionID
 	m.sessionState = SessionActive
 	m.idleAt = time.Time{}
+	m.turnEnded = false
 	m.connected = true
 	m.main = mainState{editedFiles: map[string]struct{}{}}
 	m.agents = map[string]*agentState{}
@@ -378,12 +382,27 @@ func (m *Machine) Apply(ev event.Event, now time.Time) []event.Event {
 			m.bumpRev()
 		}
 		out = append(out, m.checkRunEnd(now)...)
+	case event.TurnEnded:
+		// A turn ending settles the run and nothing else. It is not idleness:
+		// the session state drives a whole-layout swap to the §3.8 idle
+		// screen, and a session that pauses between turns has not finished
+		// anything the reader needs summarised.
+		//
+		// Measured on a background job session: 40 turn ends, and the gap to
+		// the next tool call ran to a median of 125 s and a p90 of 627 s. Read
+		// as idleness that is a pane which drops out of the tree, into a
+		// summary of a run from earlier, for minutes at a time, over and over,
+		// while the work it was opened to watch carries on `[captured
+		// 2026-09-15]`.
+		m.turnEnded = true
+		out = append(out, m.checkRunEnd(now)...)
 	case event.UserPromptSubmitted:
 		m.sessionState = SessionActive
 		if m.sessionID == "" && ev.SessionID != "" {
 			m.sessionID = ev.SessionID
 		}
 		m.bumpRev()
+		m.turnEnded = false
 		if m.run == nil {
 			m.runSeq++
 			m.run = &runState{
@@ -1259,8 +1278,16 @@ func (m *Machine) resetMainEdits(now time.Time) []event.Event {
 
 // --- runs (§2.8) ---
 
+// checkRunEnd settles the run once the turn that started it is over and every
+// member has landed.
+//
+// "The turn is over" has two spellings and they are not the same claim. The
+// registry saying idle means the CLI is waiting for a human. The transcript's
+// turn end means main stopped working, which is all a run needs: a background
+// job ends turn after turn without a human anywhere near it, and gating on
+// idleness alone left those runs open forever.
 func (m *Machine) checkRunEnd(now time.Time) []event.Event {
-	if m.run == nil || m.sessionState != SessionIdle {
+	if m.run == nil || (m.sessionState != SessionIdle && !m.turnEnded) {
 		return nil
 	}
 	for _, id := range m.run.members {

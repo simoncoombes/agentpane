@@ -212,6 +212,13 @@ const (
 	SessionStart
 	SessionEnd
 	SessionIdle
+	// TurnEnded is the transcript's `{"type":"system","subtype":"turn_duration"}`
+	// line: the main agent finished a turn. It is NOT SessionIdle. A turn
+	// ending means the run is over, which is why it settles one; whether the
+	// SESSION is now waiting for a human is a different question, and the
+	// sessions registry answers it (DATA-SOURCES §2). A background job runs
+	// many turns without a human anywhere near it.
+	TurnEnded
 	UserPromptSubmitted
 	CompactStarted
 	CompactFinished
@@ -279,6 +286,7 @@ var kindNames = map[Kind]string{
 	SessionStart:        "SessionStart",
 	SessionEnd:          "SessionEnd",
 	SessionIdle:         "SessionIdle",
+	TurnEnded:           "TurnEnded",
 	UserPromptSubmitted: "UserPromptSubmitted",
 	CompactStarted:      "CompactStarted",
 	CompactFinished:     "CompactFinished",
