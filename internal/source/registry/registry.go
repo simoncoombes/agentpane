@@ -39,6 +39,69 @@ type Session struct {
 	Status     string
 	WaitingFor string
 	UpdatedAt  time.Time // statusUpdatedAt when parseable, else file mtime; advisory
+
+	// Kind is "interactive" for a terminal tab and "bg" for a background job
+	// process. JobID is the job a bg row runs; ParkedJobID is the job an
+	// interactive row has handed its work to. Spare marks a warmed bg process
+	// that has been given no work yet. See Follow.
+	Kind        string
+	JobID       string
+	ParkedJobID string
+	Spare       bool
+}
+
+// maxParkHops caps the parkedJobId walk in Follow. A longer chain is a
+// registry shape we do not understand, and stopping on the last row we
+// resolved beats looping here.
+const maxParkHops = 4
+
+// Follow returns the row whose agents belong to from: from itself, or the
+// background job it has parked its work on.
+//
+// A tab does not always run its own work. Claude Code can move it to a
+// background job process, and then the interactive row keeps its sessionId,
+// goes status:"idle" and grows parkedJobId:"<job>", while a second row with
+// kind:"bg" and jobId:"<job>" does the work under a DIFFERENT session id. A
+// pane attached to the tab's id watches an idle session for as long as that
+// lasts, while the agents it was opened for run next door `[captured
+// 2026-09-15]`.
+//
+// The hop is by job id because that is the only field the two rows share.
+// It stops on a row that parks nothing, on a job whose row is missing (the
+// process died between registry writes), and on a repeat.
+func Follow(rows []Session, from Session) Session {
+	seen := make(map[string]bool, maxParkHops)
+	cur := from
+	for i := 0; i < maxParkHops; i++ {
+		job := cur.ParkedJobID
+		if job == "" || seen[job] {
+			return cur
+		}
+		seen[job] = true
+		next, ok := byJobID(rows, job)
+		if !ok {
+			return cur
+		}
+		cur = next
+	}
+	return cur
+}
+
+// byJobID finds the row running a job id. Ties go to the newest row, because
+// a spare that has just been handed the job and a dead predecessor can both
+// be on disk for a poll or two.
+func byJobID(rows []Session, job string) (Session, bool) {
+	var best Session
+	found := false
+	for _, row := range rows {
+		if row.JobID != job {
+			continue
+		}
+		if !found || row.UpdatedAt.After(best.UpdatedAt) {
+			best, found = row, true
+		}
+	}
+	return best, found
 }
 
 // Option configures a Source.
@@ -143,13 +206,20 @@ func (s *Source) Sessions() []Session {
 }
 
 // AttachTarget returns the newest live session whose cwd matches
-// (SPEC §3.8a attach rule).
+// (SPEC §3.8a attach rule), hopped through Follow.
+//
+// A spare bg process is never the answer: it is a warmed shell holding no
+// work, it is idle by definition, and picking it would park this pane on a
+// session that has nothing to show. Follow still reaches one the moment a
+// tab parks a job onto it, because that hop is stated in the registry
+// rather than guessed at here.
 func (s *Source) AttachTarget(cwd string) (Session, bool) {
 	cwd = filepath.Clean(cwd)
+	rows := s.Sessions()
 	var best Session
 	found := false
-	for _, row := range s.Sessions() {
-		if filepath.Clean(row.CWD) != cwd {
+	for _, row := range rows {
+		if row.Spare || filepath.Clean(row.CWD) != cwd {
 			continue
 		}
 		if !found || row.UpdatedAt.After(best.UpdatedAt) ||
@@ -158,7 +228,10 @@ func (s *Source) AttachTarget(cwd string) (Session, bool) {
 			found = true
 		}
 	}
-	return best, found
+	if !found {
+		return Session{}, false
+	}
+	return Follow(rows, best), true
 }
 
 func (s *Source) Events(ctx context.Context) (<-chan event.Event, error) {
@@ -323,6 +396,10 @@ func (s *Source) parseFile(path string, pid int) (Session, bool) {
 		Status          string          `json:"status"`
 		WaitingFor      string          `json:"waitingFor"`
 		StatusUpdatedAt json.RawMessage `json:"statusUpdatedAt"`
+		Kind            string          `json:"kind"`
+		JobID           string          `json:"jobId"`
+		ParkedJobID     string          `json:"parkedJobId"`
+		Spare           bool            `json:"spare"`
 	}
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return Session{}, false
@@ -342,6 +419,11 @@ func (s *Source) parseFile(path string, pid int) (Session, bool) {
 		Status:     f.Status,
 		WaitingFor: f.WaitingFor,
 		UpdatedAt:  updated,
+
+		Kind:        f.Kind,
+		JobID:       f.JobID,
+		ParkedJobID: f.ParkedJobID,
+		Spare:       f.Spare,
 	}, true
 }
 

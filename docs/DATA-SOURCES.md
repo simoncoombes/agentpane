@@ -103,6 +103,42 @@ is the only granularity (no intra-message streaming).
 
 ---
 
+## 2.1 Sessions-registry rows: tabs and background jobs `[captured 2026-09-15]`
+
+A session's work does not always run under the session id its tab started
+with. Claude Code can park it on a background job process, which gets its own
+registry row and its own session id. Both rows are live at once:
+
+```json
+{"pid":18643,"sessionId":"10e378ef-…","kind":"interactive","status":"idle","parkedJobId":"e9e4ae8e","name":"dev-3d"}
+{"pid":26106,"sessionId":"e9e4ae8e-…","kind":"bg","status":"busy","jobId":"e9e4ae8e","name":"Pull latest tradefloor and tradefloor-design"}
+{"pid":26062,"sessionId":"98f87989-…","kind":"bg","status":"idle","jobId":"98f87989","spare":true,"name":"98f87989"}
+```
+
+| Field | Tag | Notes |
+|---|---|---|
+| `kind` | `[captured]` | `"interactive"` for a terminal tab, `"bg"` for a job process |
+| `jobId` | `[captured]` | the job a `bg` row runs; the first 8 chars of its own session id in every specimen |
+| `parkedJobId` | `[captured]` | on the INTERACTIVE row: the job it has handed its work to. The only link between the two rows |
+| `spare` | `[captured]` | a warmed `bg` process holding no work. Whether it is cleared when the process is given a job is **unverified** |
+| `name` | `[captured]` | a bg row doing real work carries the tab's ai-title; a spare carries its own job id |
+
+While the park lasts, the tab is `idle` and every agent, token and permission
+prompt belongs to the bg session. A pane attached to the tab's id sees none of
+it: hook payloads carry the job's `session_id`, so they go to the job's socket
+(`agentpane-<session>.sock`) and its transcript, both of which the pane is not
+watching. Observed live on 2026-09-15: a pane pinned at 08:51 still drew the
+tab's idle row at 14:44 with three agents running under `e9e4ae8e`.
+
+agentpane resolves this in `registry.Follow`: the attach target is the pinned
+row, or the row whose `jobId` matches its `parkedJobId`. `followSession`
+re-reads the registry every second, so the hop happens mid-session and
+reverses when the work returns to the tab. The pane's state file and run
+history stay filed under the TAB's id, because that is what `--oneline` and
+the auto-opened pane are named after.
+
+---
+
 ## 3. Hooks in detail
 
 ### 3.0 Registration mechanics on this machine

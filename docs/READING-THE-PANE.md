@@ -462,6 +462,25 @@ part that gets elided.
 Only that one run: the earlier ones are on disk and `agentpane runs` prints
 them.
 
+## When your tab parks its work
+
+Claude Code can move a session's work to a background job that runs under a
+different session id. The tab's own registry row goes `status:"idle"` and
+grows a `parkedJobId`; a second row with `kind:"bg"` runs the agents.
+
+The pane follows. The header names both ids while it does:
+
+```
+AGENTS 3 · 10e3 → e9e4                                  1m55s · 48.7k tok
+```
+
+`10e3` is the tab this pane was opened for, `e9e4` is the job it is watching.
+`?` spells it out on the FOLLOWING line. When the work comes back to the tab
+the pane follows back, and the header returns to one id.
+
+A pane that stayed on the tab would draw an idle session for as long as the
+park lasted, however many agents were running. That is what this fixes.
+
 ## Status bar (`--oneline`)
 
 Each running TUI writes a small state file to

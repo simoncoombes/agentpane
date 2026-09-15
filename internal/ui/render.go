@@ -255,6 +255,9 @@ func treeBlockCut(ids []string, rest int) int {
 // registry yet has no world id; it names the pin, which is the honest answer
 // to "what am I looking at".
 func headerSessionID(w state.World, v *UIState) string {
+	if v.following() {
+		return shortSessionID(v.PinnedSession) + " → " + shortSessionID(v.Attached)
+	}
 	if w.Session.ShortID != "" && (v.PinnedSession != "" || len(v.Sessions) > 1) {
 		return w.Session.ShortID
 	}

@@ -183,8 +183,17 @@ func doctorReport(w io.Writer, session string) int {
 			// Pinned: exactly that id, no cwd rule and no fallback — the same
 			// no-guess resolution `agentpane --session <id>` itself performs.
 			if row, found := sessionByID(rows, session); found {
-				target, haveTarget = row, true
-				ok("attach target: %s (--session, exact match in %s)", shortID(row.SessionID), tildeDir(row.CWD))
+				target, haveTarget = registry.Follow(rows, row), true
+				if target.SessionID != row.SessionID {
+					// The pane is not on the id it was opened for, and that is
+					// correct: this tab has handed its work to a background
+					// job. Say it here, because every other line below now
+					// describes the job and not the tab.
+					ok("attach target: %s → %s (--session, and that tab has parked its work on background job %s)",
+						shortID(row.SessionID), shortID(target.SessionID), row.ParkedJobID)
+				} else {
+					ok("attach target: %s (--session, exact match in %s)", shortID(row.SessionID), tildeDir(row.CWD))
+				}
 			} else {
 				warn("attach target: session %s is not in the registry — a pane pinned to it waits for that id and never falls back to another session", shortID(session))
 			}
@@ -209,8 +218,10 @@ func doctorReport(w io.Writer, session string) int {
 	// The socket is per session. With --session the check follows the pin even
 	// when that session has not reached the registry, because that is exactly
 	// the pane whose socket the reader is asking about.
+	// The pane listens on the socket of the session it ATTACHED to, which is
+	// the background job when the pinned tab has parked its work.
 	sockSession := session
-	if sockSession == "" && haveTarget {
+	if haveTarget {
 		sockSession = target.SessionID
 	}
 	if sockSession != "" {

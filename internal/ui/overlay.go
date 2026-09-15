@@ -57,6 +57,10 @@ func renderOverlay(w state.World, v *UIState, cols, rows int, pal Palette) [][]s
 		add(line(seg{"SESSION ", pal.Deep},
 			seg{shortSessionID(v.PinnedSession) + " · pinned to this pane", pal.Primary}))
 	}
+	if v.following() {
+		add(line(seg{"FOLLOWING ", pal.Deep},
+			seg{shortSessionID(v.Attached) + " · this tab parked its work on a background job", pal.Primary}))
+	}
 	add(line(seg{fmt.Sprintf("%d dropped events — see the debug log", w.DroppedEvents), pal.Settled}))
 	if v.AccentReason != "" {
 		add(line(seg{"ACCENT ", pal.Deep}, seg{v.AccentReason, pal.Settled}))

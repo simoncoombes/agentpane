@@ -8,7 +8,7 @@ handful you need on day one.
 | Invocation | Does |
 |---|---|
 | `agentpane` | attach to the current directory's newest live session, render live |
-| `agentpane --session <id>` | attach to exactly this session id and never guess: no cwd rule, no session picker, waits if the id has not reached the registry yet (auto-open panes are launched this way). An empty value is refused - an unset variable must not silently become a guess |
+| `agentpane --session <id>` | attach to exactly this session id and never guess: no cwd rule, no session picker, waits if the id has not reached the registry yet (auto-open panes are launched this way). An empty value is refused - an unset variable must not silently become a guess. If that session parks its work on a background job the pane follows it there and back, and the header names both (`10e3 → e9e4`) |
 | `agentpane --demo` | replay the §2.10 scenario, no Claude needed |
 | `agentpane --demo-speed 2.0` | demo playback speed multiplier |
 | `agentpane --demo-seek 90` | jump the demo to t=90s |

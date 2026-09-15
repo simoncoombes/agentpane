@@ -268,3 +268,88 @@ func TestSessionFilterKeepsTransportEvents(t *testing.T) {
 		t.Fatalf("transport event carries a session id %q", got[0].SessionID)
 	}
 }
+
+// --- background jobs (Follow) ---
+
+// TestParseFileReadsTheJobFields: the fields that say a tab has handed its
+// work to a background job. Captured shape, 2026-09-15:
+//
+//	interactive tab: {"sessionId":"10e3…","kind":"interactive","status":"idle","parkedJobId":"e9e4…"}
+//	background job:  {"sessionId":"e9e4…","kind":"bg","status":"busy","jobId":"e9e4…"}
+func TestParseFileReadsTheJobFields(t *testing.T) {
+	dir := t.TempDir()
+	writeSession(t, dir, os.Getpid(), `{"sessionId":"tab-1","cwd":"/d","kind":"interactive","status":"idle","parkedJobId":"J1"}`)
+	src := New(dir, WithLiveness(func(int) bool { return true }))
+
+	rows := src.Sessions()
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].Kind != "interactive" || rows[0].ParkedJobID != "J1" {
+		t.Fatalf("kind = %q parkedJobId = %q", rows[0].Kind, rows[0].ParkedJobID)
+	}
+
+	writeSession(t, dir, os.Getpid()+1, `{"sessionId":"job-1","cwd":"/d","kind":"bg","status":"busy","jobId":"J1","spare":true}`)
+	for _, row := range src.Sessions() {
+		if row.SessionID != "job-1" {
+			continue
+		}
+		if row.JobID != "J1" || !row.Spare {
+			t.Fatalf("jobId = %q spare = %v", row.JobID, row.Spare)
+		}
+		return
+	}
+	t.Fatal("the bg row went missing")
+}
+
+// TestFollowWalksToTheParkedJob: a pane pointed at a parked tab has to land on
+// the job, because the tab is idle for as long as the park lasts and every
+// agent is on the other row.
+func TestFollowWalksToTheParkedJob(t *testing.T) {
+	t0 := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	tab := Session{PID: 1, SessionID: "tab-1", Kind: "interactive", ParkedJobID: "J1", UpdatedAt: t0}
+	job := Session{PID: 2, SessionID: "job-1", Kind: "bg", JobID: "J1", UpdatedAt: t0}
+	plain := Session{PID: 3, SessionID: "plain-1", Kind: "interactive", UpdatedAt: t0}
+
+	if got := Follow([]Session{tab, job, plain}, tab); got.SessionID != "job-1" {
+		t.Errorf("followed to %q, want job-1", got.SessionID)
+	}
+	if got := Follow([]Session{tab, job, plain}, plain); got.SessionID != "plain-1" {
+		t.Errorf("a row that parks nothing followed to %q", got.SessionID)
+	}
+	// The job's row has not been written yet, or the process is gone: stay on
+	// what we have rather than attach to nothing.
+	if got := Follow([]Session{tab, plain}, tab); got.SessionID != "tab-1" {
+		t.Errorf("missing job row followed to %q, want tab-1", got.SessionID)
+	}
+	// Newest wins when a dead predecessor and its replacement share a job id.
+	old := Session{PID: 4, SessionID: "job-old", Kind: "bg", JobID: "J1", UpdatedAt: t0.Add(-time.Hour)}
+	if got := Follow([]Session{tab, old, job}, tab); got.SessionID != "job-1" {
+		t.Errorf("stale duplicate won: %q", got.SessionID)
+	}
+}
+
+// TestFollowStopsOnACycle: two rows parking onto each other must not spin the
+// poll loop. The walk is capped and returns the last row it resolved.
+func TestFollowStopsOnACycle(t *testing.T) {
+	a := Session{SessionID: "a", JobID: "JA", ParkedJobID: "JB"}
+	b := Session{SessionID: "b", JobID: "JB", ParkedJobID: "JA"}
+	got := Follow([]Session{a, b}, a)
+	if got.SessionID != "a" && got.SessionID != "b" {
+		t.Fatalf("followed a cycle to %q", got.SessionID)
+	}
+}
+
+// TestAttachTargetSkipsSpares: a warmed bg process holding no work is never
+// the answer to "which session is this directory running".
+func TestAttachTargetSkipsSpares(t *testing.T) {
+	dir := t.TempDir()
+	writeSession(t, dir, os.Getpid(), `{"sessionId":"tab-1","cwd":"/d","kind":"interactive","status":"busy","statusUpdatedAt":1789000000000}`)
+	writeSession(t, dir, os.Getpid()+1, `{"sessionId":"spare-1","cwd":"/d","kind":"bg","status":"idle","jobId":"J9","spare":true,"statusUpdatedAt":1789000009000}`)
+	src := New(dir, WithLiveness(func(int) bool { return true }))
+
+	got, ok := src.AttachTarget("/d")
+	if !ok || got.SessionID != "tab-1" {
+		t.Fatalf("attach target = %q (ok=%v), want tab-1", got.SessionID, ok)
+	}
+}
