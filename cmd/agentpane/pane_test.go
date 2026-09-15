@@ -272,9 +272,7 @@ func TestRunPaneChainFallsThrough(t *testing.T) {
 	tmp := t.TempDir()
 	marker := filepath.Join(tmp, "ran")
 	good := filepath.Join(tmp, "good")
-	if err := os.WriteFile(good, []byte("#!/bin/sh\ntouch \"$1\"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeFakeProgram(t, good, "touch \"$1\"\n")
 
 	if runPaneChain(nil, time.Second) {
 		t.Error("an empty chain reported success")
@@ -284,7 +282,7 @@ func TestRunPaneChainFallsThrough(t *testing.T) {
 	}
 	chain := []paneCmd{
 		{argv: []string{filepath.Join(tmp, "nope")}},        // not installed
-		{argv: []string{"/usr/bin/false"}},                  // installed, fails
+		{argv: []string{alwaysFails()}},                     // installed, fails
 		{argv: []string{good, marker}},                      // works
 		{argv: []string{good, filepath.Join(tmp, "extra")}}, // must not run
 	}
@@ -305,13 +303,11 @@ func TestRunPaneChainFallsThrough(t *testing.T) {
 func TestRunPaneChainFollowUps(t *testing.T) {
 	tmp := t.TempDir()
 	good := filepath.Join(tmp, "good")
-	if err := os.WriteFile(good, []byte("#!/bin/sh\ntouch \"$1\"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeFakeProgram(t, good, "touch \"$1\"\n")
 	after := filepath.Join(tmp, "after")
 	chain := []paneCmd{{
 		argv:  []string{good, filepath.Join(tmp, "main")},
-		after: [][]string{{good, after}, {"/usr/bin/false"}},
+		after: [][]string{{good, after}, {alwaysFails()}},
 	}}
 	if !runPaneChain(chain, 5*time.Second) {
 		t.Fatal("a failing follow-up failed the whole attempt")

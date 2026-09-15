@@ -66,10 +66,7 @@ func setupAutopaneEnv(t *testing.T) (argvFile string) {
 	t.Setenv("HOME", tmp)
 	argvFile = filepath.Join(tmp, "osascript-argv.txt")
 	fake := filepath.Join(tmp, "fake-osascript")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AUTOPANE_TEST_ARGV\"\n"
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeFakeProgram(t, fake, "printf '%s\\n' \"$@\" > \"$AUTOPANE_TEST_ARGV\"\n")
 	t.Setenv("AUTOPANE_TEST_ARGV", argvFile)
 	t.Setenv("AGENTPANE_OSASCRIPT", fake)
 	t.Setenv("TERM_PROGRAM", "iTerm.app")
