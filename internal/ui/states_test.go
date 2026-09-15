@@ -184,7 +184,7 @@ func TestStateDroppedEventsInOverlay(t *testing.T) {
 func TestIdleSessionSwitching(t *testing.T) {
 	m, _ := newTestModel(t)
 	switched := []string{}
-	m.cfg.SwitchSession = func(row SessionRow) { switched = append(switched, row.ShortID) }
+	m.cfg.SwitchSession = func(row SessionRow) string { switched = append(switched, row.ShortID); return "" }
 	m.v.Sessions = []SessionRow{
 		{ShortID: "3f9c", Attached: true, Live: true},
 		{ShortID: "2a71", Live: true, Idle: true},

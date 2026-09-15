@@ -209,7 +209,7 @@ func TestPinnedSwitchKeysAreNoOps(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			m, _ := newTestModel(t)
 			switched := 0
-			m.cfg.SwitchSession = func(SessionRow) { switched++ }
+			m.cfg.SwitchSession = func(SessionRow) string { switched++; return "" }
 			m.v.Sessions = pinTestSessions(c.sessions)
 			m.v.PinnedSession, m.v.Attached = c.pinned, c.pinned
 			m.world = pinIdleWorld()
@@ -230,7 +230,7 @@ func TestPinnedSwitchKeysAreNoOps(t *testing.T) {
 	// path for a hand-run agentpane in a busy directory).
 	m, _ := newTestModel(t)
 	switched := []string{}
-	m.cfg.SwitchSession = func(row SessionRow) { switched = append(switched, row.ShortID) }
+	m.cfg.SwitchSession = func(row SessionRow) string { switched = append(switched, row.ShortID); return "" }
 	m.v.Sessions = pinTestSessions(3)
 	m.world = pinIdleWorld()
 	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})

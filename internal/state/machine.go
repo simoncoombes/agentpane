@@ -318,6 +318,11 @@ func (m *Machine) unidle(ev event.Event, at time.Time) {
 	m.bumpRev()
 }
 
+// SessionID is the id this world is keyed to ("" = unpinned, accepts
+// everything). It is what Accepts compares against, so a caller that has just
+// been told the source stack moved can ask whether the world still matches it.
+func (m *Machine) SessionID() string { return m.sessionID }
+
 // Apply feeds one source event into the machine and returns any derived
 // events it produced. Malformed, derived-from-source, cross-session, and
 // unresolvable events are counted and dropped, never panicked on (C9).

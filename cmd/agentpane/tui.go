@@ -128,25 +128,22 @@ func runTUI(fl cliFlags, stderr io.Writer) int {
 		}
 
 		att := &attacher{appCtx: ctx, out: make(chan event.Event, 256), regDir: regDir, fl: fl, dbg: dbg}
+		att.setBase(choice.Base)
 		if err := att.attach(choice.Session); err != nil { // zero Session = registry-only watch
 			fmt.Fprintf(stderr, "agentpane: %v\n", err)
 			return 1
 		}
-		switch {
-		case choice.Pinned:
-			// Pin the machine to the id we were TOLD to watch, before any
-			// event arrives — including while the registry row is still
-			// missing, so a sibling session's rows can never build a world
-			// here.
-			machine.Reset(fl.session)
-			if choice.Waiting {
-				go waitForPinned(ctx, reg, att, fl.session, registryPollInterval)
-			}
-		case choice.Session.SessionID != "":
-			// Same pin for a guessed attach: another session's registry rows
-			// (SessionIdle, permission waits) must not mutate this world
-			// before our own SessionStart arrives.
-			machine.Reset(choice.Session.SessionID)
+		// Pin the machine to the id the stack is actually on, before any event
+		// arrives — including while a pinned row is still missing, so a sibling
+		// session's rows can never build a world here. With a parked tab that
+		// is the background job, not the pin: the pin names the tab, the job
+		// runs the agents, and keying the machine to the tab would drop every
+		// event the pane just subscribed to.
+		if key := choice.attachID(); key != "" {
+			machine.Reset(key)
+		}
+		if choice.Base != "" {
+			go followSession(ctx, reg, att, registryPollInterval)
 		}
 
 		// Both on-disk sinks are keyed by the session this pane watches. A
@@ -154,10 +151,11 @@ func runTUI(fl cliFlags, stderr io.Writer) int {
 		// with N panes running there is no such thing as "the" state file:
 		// runs/s-<id>/ and current-<id>.json are per session, so neither the
 		// idle screen's history nor --oneline can drift onto a sibling.
-		scope := fl.session
-		if scope == "" {
-			scope = choice.Session.SessionID
-		}
+		// Keyed to the TAB, not to whatever it is running: a pinned pane's
+		// `--oneline` reads current-<pin>.json, and the idle screen's run
+		// history is that tab's work. Following a parked job moves the world,
+		// not the name it is filed under.
+		scope := choice.Base
 		stateDir, _ := statefile.DefaultDir()
 		runsDir, _ := runstore.DefaultDir()
 		store := &runstore.Store{Dir: runsDir, HistoryRuns: cfg.HistoryRuns, Session: scope}
@@ -175,8 +173,9 @@ func runTUI(fl cliFlags, stderr io.Writer) int {
 			// Only an unpinned TUI may switch sessions (§3.8a picker). A
 			// pinned pane belongs to one tab; leaving this nil means even a
 			// stray key press cannot move it.
-			uiCfg.SwitchSession = func(row ui.SessionRow) {
-				for _, s := range reg.Sessions() {
+			uiCfg.SwitchSession = func(row ui.SessionRow) string {
+				rows := reg.Sessions()
+				for _, s := range rows {
 					if s.SessionID == row.ID {
 						// Re-key both sinks before the swap: the Model reloads
 						// run history straight after this returns, and the next
@@ -188,10 +187,15 @@ func runTUI(fl cliFlags, stderr io.Writer) int {
 						// and takes its lock in SetSession.
 						store.Session = s.SessionID
 						writer.SetSession(s.SessionID)
-						att.attach(s) //nolint:errcheck // degrade silently (§5.4)
-						return
+						att.setBase(s.SessionID)
+						target := registry.Follow(rows, s)
+						att.attach(target) //nolint:errcheck // degrade silently (§5.4)
+						// The id the caller must key its world to, which is the
+						// picked row's job when that row has parked one.
+						return target.SessionID
 					}
 				}
+				return ""
 			}
 		}
 		uiCfg.DetailUnavailable = detailUnavailable(fl, cwd)
@@ -215,10 +219,20 @@ const registryPollInterval = time.Second
 // watch?" for one registry snapshot.
 type attachChoice struct {
 	Session registry.Session // zero when nothing can be attached yet
+	Base    string           // the session this pane BELONGS to (the tab)
 	Found   bool             // Session is a real row
 	Pinned  bool             // --session was given: the answer can never change
 	Waiting bool             // pinned, but that id is not in the registry yet
 	Note    string           // config warning to surface once ("" = unambiguous)
+}
+
+// attachID is the session id the world must be keyed to: the row we attached
+// to, or the base while that row has not reached the registry yet.
+func (c attachChoice) attachID() string {
+	if c.Session.SessionID != "" {
+		return c.Session.SessionID
+	}
+	return c.Base
 }
 
 // resolveAttach is the §3.8a attach rule plus the --session pin, as a pure
@@ -236,23 +250,42 @@ type attachChoice struct {
 // Unpinned: newest live session whose cwd matches (§3.8a); else the newest
 // live session anywhere, noted; else nothing (the idle screen keeps
 // watching).
+//
+// Either way the answer is run through registry.Follow, so a tab that has
+// parked its work on a background job attaches to the job. Base keeps the
+// tab's own id, because that is what the pane belongs to and what its state
+// file and run history are named after.
 func resolveAttach(rows []registry.Session, cwd, pinned string) attachChoice {
 	if pinned != "" {
 		for _, row := range rows {
 			if row.SessionID == pinned {
-				return attachChoice{Session: row, Found: true, Pinned: true}
+				return attachChoice{Session: registry.Follow(rows, row), Base: pinned, Found: true, Pinned: true}
 			}
 		}
-		return attachChoice{Pinned: true, Waiting: true}
+		return attachChoice{Base: pinned, Pinned: true, Waiting: true}
 	}
 	if best, ok := newestForCWD(rows, cwd); ok {
-		return attachChoice{Session: best, Found: true}
+		return attachChoice{Session: registry.Follow(rows, best), Base: best.SessionID, Found: true}
 	}
-	if len(rows) > 0 {
-		return attachChoice{Session: rows[0], Found: true,
-			Note: "attached " + shortID(rows[0].SessionID) + " - newest live session (none matches this directory)"}
+	if best, ok := newestLive(rows); ok {
+		target := registry.Follow(rows, best)
+		return attachChoice{Session: target, Base: best.SessionID, Found: true,
+			Note: "attached " + shortID(target.SessionID) + " - newest live session (none matches this directory)"}
 	}
 	return attachChoice{}
+}
+
+// newestLive is the last-resort pick: the newest live row in the registry,
+// whatever directory it is in. Spares are skipped for the reason
+// registry.AttachTarget states — a warmed bg process holding no work is the
+// one session guaranteed to show nothing.
+func newestLive(rows []registry.Session) (registry.Session, bool) {
+	for _, row := range rows {
+		if !row.Spare {
+			return row, true // read() sorts newest first
+		}
+	}
+	return registry.Session{}, false
 }
 
 // newestForCWD is registry.AttachTarget's rule applied to an already-read
@@ -262,7 +295,7 @@ func newestForCWD(rows []registry.Session, cwd string) (registry.Session, bool) 
 	var best registry.Session
 	found := false
 	for _, row := range rows {
-		if filepath.Clean(row.CWD) != cwd {
+		if row.Spare || filepath.Clean(row.CWD) != cwd {
 			continue
 		}
 		if !found || row.UpdatedAt.After(best.UpdatedAt) ||
@@ -273,12 +306,24 @@ func newestForCWD(rows []registry.Session, cwd string) (registry.Session, bool) 
 	return best, found
 }
 
-// waitForPinned polls the registry until pinned appears, then attaches the
-// real source stack to it. No timeout and no fallback by design: the pane
-// belongs to that session's tab, and the honest idle screen ("waiting for
-// session <id>") is a better answer than a plausible wrong one. Cancelled
-// with the app context.
-func waitForPinned(ctx context.Context, reg *registry.Source, att *attacher, pinned string, every time.Duration) {
+// followSession keeps the source stack on the session this pane's tab is
+// actually running, re-reading the registry every tick. It does two jobs that
+// used to be one:
+//
+// It waits for a pinned row to appear. No timeout and no fallback by design:
+// the pane belongs to that session's tab, and the honest idle screen
+// ("waiting for session <id>") is a better answer than a plausible wrong one.
+//
+// It follows the tab onto a background job and back (registry.Follow). This
+// has to be a loop rather than a decision taken at startup, because parking
+// happens mid-session: a pane opened on an interactive tab at 08:51 was still
+// drawing that tab's idle row hours later while three agents ran under a job
+// session it had never heard of.
+//
+// The base row going missing is NOT a reason to re-resolve anything. A tab
+// that exits leaves the pane on its last stack, where the idle screen says so.
+// Cancelled with the app context.
+func followSession(ctx context.Context, reg *registry.Source, att *attacher, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -286,9 +331,17 @@ func waitForPinned(ctx context.Context, reg *registry.Source, att *attacher, pin
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if c := resolveAttach(reg.Sessions(), "", pinned); c.Found {
-				att.attach(c.Session) //nolint:errcheck // degrade silently (§5.4)
-				return
+			base := att.baseID()
+			if base == "" {
+				continue
+			}
+			rows := reg.Sessions()
+			row, ok := sessionByID(rows, base)
+			if !ok {
+				continue
+			}
+			if want := registry.Follow(rows, row); want.SessionID != att.current() {
+				att.attach(want) //nolint:errcheck // degrade silently (§5.4)
 			}
 		}
 	}
@@ -335,6 +388,7 @@ type attacher struct {
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
+	base   string // the session this pane belongs to; followSession resolves from it
 	sessID string
 	gen    int    // attach generation: a superseded pump stops forwarding
 	seq    uint64 // monotonic across attaches — see forward
@@ -390,17 +444,36 @@ func (a *attacher) forward(ctx context.Context, gen int, ev event.Event) bool {
 	}
 }
 
-// scope is the session id this pane's sources belong to: the --session pin
-// when there is one (it holds even while the pinned row has not reached the
-// registry and nothing is attached yet), else the session actually attached,
-// else "" — an unpinned pane with nothing to attach to, which watches the
-// whole registry because discovering a session is the only thing left for it
-// to do.
+// scope is the session id this pane's sources belong to: the session being
+// attached, else the --session pin (it holds while the pinned row has not
+// reached the registry and nothing is attached yet), else "" — an unpinned
+// pane with nothing to attach to, which watches the whole registry because
+// discovering a session is the only thing left for it to do.
+//
+// The attached id comes first so that a pane following a parked tab filters
+// the registry to the JOB. Filtering to the pin there would drop the rows the
+// pane is now watching for, including the job's permission waits.
 func (a *attacher) scope(sess registry.Session) string {
-	if a.fl.session != "" {
-		return a.fl.session
+	if sess.SessionID != "" {
+		return sess.SessionID
 	}
-	return sess.SessionID
+	return a.fl.session
+}
+
+// setBase records the session this pane belongs to: the --session pin, the
+// §3.8a guess, or whatever the idle picker last chose. followSession resolves
+// the attach target from it every tick.
+func (a *attacher) setBase(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.base = id
+}
+
+// baseID returns the session this pane belongs to ("" = nothing yet).
+func (a *attacher) baseID() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.base
 }
 
 // current returns the attached session id ("" when watching the registry).

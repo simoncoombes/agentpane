@@ -262,6 +262,15 @@ func (v *UIState) pinnedWaiting() bool {
 	return v.PinnedSession != "" && v.Attached == ""
 }
 
+// following reports that this pane is watching a session other than the one
+// it was pinned to, which happens when the tab parked its work on a
+// background job (registry.Follow). The header names both, because "which
+// session am I looking at" now has two honest answers and hiding either one
+// is how a pane ends up drawing an idle tab while its agents run next door.
+func (v *UIState) following() bool {
+	return v.PinnedSession != "" && v.Attached != "" && v.Attached != v.PinnedSession
+}
+
 // slugFor assigns/returns the stable slug for an agent (§3.16). Teammates
 // show their given name verbatim (§3.15). An agent whose name has not arrived
 // yet gets a placeholder and reserves nothing (see placeholderName).

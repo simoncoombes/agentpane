@@ -106,11 +106,64 @@ func TestResolveAttach(t *testing.T) {
 				t.Errorf("note = %q, want present=%v", got.Note, c.note)
 			}
 			// The invariant behind the whole flag: a pin never resolves to
-			// some other session, whatever the registry looks like.
-			if c.pinned != "" && got.Found && got.Session.SessionID != c.pinned {
-				t.Fatalf("pinned to %q but attached %q", c.pinned, got.Session.SessionID)
+			// some other session, whatever the registry looks like. Base is
+			// the pin, not the attach, because a pinned tab that has parked
+			// its work attaches to the job — stated by that tab's own row,
+			// never guessed (TestResolveAttachFollowsAParkedPin).
+			if c.pinned != "" && got.Found && got.Base != c.pinned {
+				t.Fatalf("pinned to %q but based on %q", c.pinned, got.Base)
 			}
 		})
+	}
+}
+
+// TestResolveAttachFollowsAParkedPin: the pinned tab has handed its work to a
+// background job, so the pane attaches to the job and keeps the tab as its
+// base. Attaching to the pin here is the bug — the tab is idle by definition
+// while it is parked, and the agents are all on the other row.
+func TestResolveAttachFollowsAParkedPin(t *testing.T) {
+	t0 := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	rows := []registry.Session{
+		{PID: 1, SessionID: "tab-1", CWD: "/Users/x/Dev", UpdatedAt: t0, Kind: "interactive", ParkedJobID: "J1"},
+		{PID: 2, SessionID: "job-1", CWD: "/Users/x/Dev", UpdatedAt: t0.Add(time.Minute), Kind: "bg", JobID: "J1"},
+	}
+	got := resolveAttach(rows, "/Users/x/Dev", "tab-1")
+	if !got.Found || !got.Pinned || got.Waiting {
+		t.Fatalf("found=%v pinned=%v waiting=%v", got.Found, got.Pinned, got.Waiting)
+	}
+	if got.Session.SessionID != "job-1" {
+		t.Errorf("attached %q, want job-1", got.Session.SessionID)
+	}
+	if got.Base != "tab-1" {
+		t.Errorf("base = %q, want tab-1: the pane still belongs to the tab", got.Base)
+	}
+
+	// The job row has not landed yet: stay on the tab rather than invent one.
+	got = resolveAttach(rows[:1], "/Users/x/Dev", "tab-1")
+	if got.Session.SessionID != "tab-1" {
+		t.Errorf("attached %q with the job row missing, want tab-1", got.Session.SessionID)
+	}
+}
+
+// TestResolveAttachSkipsSpares: a warmed background process holding no work
+// is idle by construction, and the §3.8a guess picking it would park the pane
+// on the one session guaranteed to show nothing.
+func TestResolveAttachSkipsSpares(t *testing.T) {
+	t0 := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	rows := []registry.Session{
+		{PID: 2, SessionID: "spare-1", CWD: "/Users/x/Dev", UpdatedAt: t0.Add(time.Minute), Kind: "bg", JobID: "J9", Spare: true},
+		{PID: 1, SessionID: "tab-1", CWD: "/Users/x/Dev", UpdatedAt: t0, Kind: "interactive"},
+	}
+	if got := resolveAttach(rows, "/Users/x/Dev", ""); got.Session.SessionID != "tab-1" {
+		t.Errorf("cwd guess attached %q, want tab-1", got.Session.SessionID)
+	}
+	if got := resolveAttach(rows, "/Users/x/elsewhere", ""); got.Session.SessionID != "tab-1" {
+		t.Errorf("fallback attached %q, want tab-1", got.Session.SessionID)
+	}
+	// Stated, not guessed: a tab that parks onto that spare still reaches it.
+	rows[1].ParkedJobID = "J9"
+	if got := resolveAttach(rows, "/Users/x/Dev", "tab-1"); got.Session.SessionID != "spare-1" {
+		t.Errorf("parked pin attached %q, want spare-1", got.Session.SessionID)
 	}
 }
 
@@ -142,10 +195,30 @@ func TestResolveAttachPinNeverGuesses(t *testing.T) {
 // process's: liveness is kill(pid, 0), and a dead pid is skipped as stale.
 func writeRegistrySession(t *testing.T, dir string, pid int, sessionID, cwd string) {
 	t.Helper()
-	body := fmt.Sprintf(`{"sessionId":%q,"cwd":%q,"name":"n","status":"busy","waitingFor":""}`, sessionID, cwd)
+	writeRegistryRow(t, dir, pid, sessionID, cwd, "")
+}
+
+// writeRegistryRow is writeRegistrySession plus raw extra fields, for the
+// background-job pair (kind/jobId/parkedJobId/spare) that Follow walks.
+func writeRegistryRow(t *testing.T, dir string, pid int, sessionID, cwd, extra string) {
+	t.Helper()
+	body := fmt.Sprintf(`{"sessionId":%q,"cwd":%q,"name":"n","status":"busy","waitingFor":""%s}`, sessionID, cwd, extra)
 	if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(pid)+".json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// waitForAttach blocks until the attacher is on want, or fails the test.
+func waitForAttach(t *testing.T, att *attacher, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if att.current() == want {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("attached %q, want %q", att.current(), want)
 }
 
 // newTestAttacher builds an attacher whose source stack touches nothing real:
@@ -171,11 +244,13 @@ func attachGen(a *attacher) int {
 	return a.gen
 }
 
-// TestWaitForPinnedAttachesOnceWhenTheRowAppears: while the pinned id is
-// absent nothing is attached — not even the sibling sessions sharing the
+// TestFollowSessionAttachesOnceWhenThePinnedRowAppears: while the pinned id
+// is absent nothing is attached — not even the sibling sessions sharing the
 // pane's directory, which is the whole bug — and when the row lands the pane
-// attaches to it exactly once and the poller returns.
-func TestWaitForPinnedAttachesOnceWhenTheRowAppears(t *testing.T) {
+// attaches to it exactly once. The poller stays alive after that (it is also
+// what follows a parked tab) but an unrelated session appearing is not a
+// reason for it to move.
+func TestFollowSessionAttachesOnceWhenThePinnedRowAppears(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -188,10 +263,11 @@ func TestWaitForPinnedAttachesOnceWhenTheRowAppears(t *testing.T) {
 	// A decoy sibling in the same directory, already live.
 	writeRegistrySession(t, regDir, os.Getpid(), "sibling-2", "/Users/x/Dev")
 
+	att.setBase("pinned-1")
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		waitForPinned(ctx, reg, att, "pinned-1", 2*time.Millisecond)
+		followSession(ctx, reg, att, 2*time.Millisecond)
 	}()
 
 	// Many poll intervals with the pinned row still missing.
@@ -204,30 +280,63 @@ func TestWaitForPinnedAttachesOnceWhenTheRowAppears(t *testing.T) {
 	}
 
 	writeRegistrySession(t, regDir, os.Getpid()+1, "pinned-1", "/Users/x/Dev")
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("waitForPinned never attached after the pinned row appeared")
-	}
-	if got := att.current(); got != "pinned-1" {
-		t.Fatalf("attached %q, want pinned-1", got)
-	}
+	waitForAttach(t, att, "pinned-1")
 	if g := attachGen(att); g != 1 {
-		t.Fatalf("attach generation = %d, want exactly 1 (one attach, then the poller stops)", g)
+		t.Fatalf("attach generation = %d, want exactly 1", g)
 	}
 
-	// The poller is gone, so a later registry change cannot re-attach.
+	// A third session appearing is not this pane's business: it is pinned,
+	// and the row it is pinned to has parked nothing.
 	writeRegistrySession(t, regDir, os.Getpid()+2, "sibling-3", "/Users/x/Dev")
 	time.Sleep(20 * time.Millisecond)
 	if g := attachGen(att); g != 1 {
-		t.Fatalf("attach generation = %d after the wait returned, want it to stay 1", g)
+		t.Fatalf("attach generation = %d after an unrelated session appeared, want it to stay 1", g)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("followSession did not return after ctx cancel")
 	}
 }
 
-// TestWaitForPinnedStopsOnContextCancel: the pane quits while still waiting.
+// TestFollowSessionHopsToTheParkedJobAndBack is the bug this loop exists for:
+// a pane pinned to an interactive tab at 08:51 was still drawing that tab's
+// idle row hours later, while the three agents it was opened to watch ran
+// under a background job session it had never heard of. The tab states the
+// hop in the registry (parkedJobId), so the pane follows it, and follows it
+// back when the work returns to the tab.
+func TestFollowSessionHopsToTheParkedJobAndBack(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	regDir := t.TempDir()
+	att := newTestAttacher(t, ctx, regDir)
+	reg := registry.New(regDir, registry.WithLiveness(func(int) bool { return true }))
+
+	tabPID, jobPID := os.Getpid(), os.Getpid()+1
+	writeRegistryRow(t, regDir, tabPID, "tab-1", "/Users/x/Dev", `,"kind":"interactive"`)
+
+	att.setBase("tab-1")
+	go followSession(ctx, reg, att, 2*time.Millisecond)
+	waitForAttach(t, att, "tab-1")
+
+	// The tab parks its work on a background job under a different session id.
+	writeRegistryRow(t, regDir, jobPID, "job-1", "/Users/x/Dev", `,"kind":"bg","jobId":"J1"`)
+	writeRegistryRow(t, regDir, tabPID, "tab-1", "/Users/x/Dev", `,"kind":"interactive","parkedJobId":"J1"`)
+	waitForAttach(t, att, "job-1")
+
+	// The job ends and the tab takes its own work back.
+	writeRegistryRow(t, regDir, tabPID, "tab-1", "/Users/x/Dev", `,"kind":"interactive"`)
+	waitForAttach(t, att, "tab-1")
+	if g := attachGen(att); g != 3 {
+		t.Fatalf("attach generation = %d, want 3 (tab, job, tab)", g)
+	}
+}
+
+// TestFollowSessionStopsOnContextCancel: the pane quits while still waiting.
 // The poller must return promptly rather than outlive the app.
-func TestWaitForPinnedStopsOnContextCancel(t *testing.T) {
+func TestFollowSessionStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -238,10 +347,11 @@ func TestWaitForPinnedStopsOnContextCancel(t *testing.T) {
 	reg := registry.New(regDir, registry.WithLiveness(func(int) bool { return true }))
 	writeRegistrySession(t, regDir, os.Getpid(), "sibling-2", "/Users/x/Dev")
 
+	att.setBase("never-appears")
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		waitForPinned(ctx, reg, att, "never-appears", time.Millisecond)
+		followSession(ctx, reg, att, time.Millisecond)
 	}()
 
 	time.Sleep(10 * time.Millisecond) // let it get into the poll loop
@@ -250,7 +360,7 @@ func TestWaitForPinnedStopsOnContextCancel(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("waitForPinned did not return after ctx cancel — the poll goroutine leaks")
+		t.Fatal("followSession did not return after ctx cancel — the poll goroutine leaks")
 	}
 	if g := attachGen(att); g != 0 {
 		t.Fatalf("attach generation = %d, want 0: a cancelled wait attaches nothing", g)

@@ -64,9 +64,11 @@ type Config struct {
 
 	// Sessions lists concurrent sessions for the idle screen (§3.8a).
 	Sessions func() []SessionRow
-	// SwitchSession reattaches to the given row (idle 1–9, §5.1). The CLI
+	// SwitchSession reattaches to the given row (idle 1–9, §5.1) and returns
+	// the session id actually attached, which is the row's own id unless that
+	// row has parked its work on a background job. The CLI
 	// owns the actual source swap.
-	SwitchSession func(row SessionRow)
+	SwitchSession func(row SessionRow) string
 	// PinnedSession is the session id this pane is FIXED to (--session).
 	// Non-empty means the attachment can never change: the §3.8a session
 	// picker and the 1–9 keys are withheld entirely, because offering to
@@ -403,9 +405,11 @@ func (m *Model) tick() {
 		m.v.Sessions = m.cfg.Sessions()
 	}
 	if m.cfg.AttachedSession != nil {
-		// The pinned-wait resolves off-thread (the CLI attaches as soon as
-		// the registry row lands), so the idle screen re-reads it each tick.
+		// The attach resolves off-thread (the CLI attaches as soon as the
+		// pinned registry row lands, and re-attaches when the tab parks its
+		// work on a background job), so the pane re-reads it each tick.
 		m.v.Attached = m.cfg.AttachedSession()
+		m.syncAttached()
 	}
 	m.dirty = true // 1s clock repaint (§3.13)
 }
@@ -642,6 +646,23 @@ func (m *Model) writeStatefile() {
 		s.OldestAskAge = m.clock.Sub(oldest.RaisedAt)
 	}
 	m.cfg.StateWriter.Update(s)
+}
+
+// syncAttached re-keys the world when the source stack has moved underneath
+// it — a pinned pane whose tab parked its work on a background job, or handed
+// it back. The events now arriving carry the new session id, and the machine
+// would drop every one of them against the old one.
+//
+// It is a reset, not a merge: the two sessions are different worlds, and the
+// agents of the one that went away are not this one's. The toast says so,
+// because a tree that empties itself with no explanation reads as a bug.
+func (m *Model) syncAttached() {
+	id := m.v.Attached
+	if id == "" || id == m.cfg.Machine.SessionID() {
+		return
+	}
+	m.resetForSession(id)
+	m.setToast("following "+shortSessionID(id), false)
 }
 
 // resetForSession clears every piece of per-session state — the machine's

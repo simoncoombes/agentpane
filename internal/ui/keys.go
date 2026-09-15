@@ -149,11 +149,16 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 					break // re-attaching the current session is a no-op
 				}
 				if m.cfg.SwitchSession != nil {
-					m.cfg.SwitchSession(row)
 					// The CLI swapped the source stack; drop every piece
 					// of the previous session's state so it cannot leak
 					// into the new one (asks, agents, logs, dedupe keys).
-					m.resetForSession(row.ID)
+					// Key the world to what it actually attached: picking a
+					// tab that has parked its work attaches to the job.
+					attached := m.cfg.SwitchSession(row)
+					if attached == "" {
+						attached = row.ID
+					}
+					m.resetForSession(attached)
 				}
 				m.setToast("attached "+row.ShortID, false)
 			}
