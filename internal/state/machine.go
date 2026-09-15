@@ -51,7 +51,10 @@ type Machine struct {
 
 	sessionID    string
 	sessionState SessionState
-	connected    bool
+	// idleAt is when the last SessionIdle landed, so unidle can tell work
+	// that came after it from work that was already in flight before it.
+	idleAt    time.Time
+	connected bool
 
 	main mainState
 
@@ -228,6 +231,7 @@ func New(cfg Config) *Machine {
 func (m *Machine) Reset(sessionID string) {
 	m.sessionID = sessionID
 	m.sessionState = SessionActive
+	m.idleAt = time.Time{}
 	m.connected = true
 	m.main = mainState{editedFiles: map[string]struct{}{}}
 	m.agents = map[string]*agentState{}
@@ -280,6 +284,40 @@ func (m *Machine) Accepts(ev event.Event) bool {
 	return ev.SessionID == "" || m.sessionID == "" || ev.SessionID == m.sessionID
 }
 
+// unidle takes the session out of SessionIdle when an event proves it is
+// working again.
+//
+// SessionIdle is a hint, not a state the session announces. The transcript
+// raises it off `{"type":"system","subtype":"turn_duration"}`, which means
+// "that turn ended", and the only events that used to clear it were
+// SessionStart, UserPromptSubmitted and PostCompact. An interactive tab gets
+// one of those with every prompt. A background job session never does: the
+// work arrives as a job rather than as a typed prompt, so after its first
+// turn ended the session latched idle for good and the pane drew the §3.8
+// idle screen over a main agent that was running a Bash call every few
+// seconds `[captured 2026-09-15]`.
+//
+// A tool call, a spawn or a permission prompt is work by definition, so any
+// of them says the hint has expired. The timestamp guard is what keeps this
+// from fighting a real idle: the transcript runs seconds behind, and a tool
+// event stamped BEFORE the turn ended is the tail of the turn that just
+// ended, not evidence of a new one.
+func (m *Machine) unidle(ev event.Event, at time.Time) {
+	if m.sessionState != SessionIdle {
+		return
+	}
+	switch ev.Kind {
+	case event.ToolStart, event.AgentSpawned, event.PermissionRequested:
+	default:
+		return
+	}
+	if at.Before(m.idleAt) {
+		return
+	}
+	m.sessionState = SessionActive
+	m.bumpRev()
+}
+
 // Apply feeds one source event into the machine and returns any derived
 // events it produced. Malformed, derived-from-source, cross-session, and
 // unresolvable events are counted and dropped, never panicked on (C9).
@@ -308,6 +346,8 @@ func (m *Machine) Apply(ev event.Event, now time.Time) []event.Event {
 		at = now
 	}
 
+	m.unidle(ev, at)
+
 	var out []event.Event
 	switch ev.Kind {
 	case event.SourceConnected:
@@ -329,6 +369,7 @@ func (m *Machine) Apply(ev event.Event, now time.Time) []event.Event {
 	case event.SessionIdle:
 		if m.sessionState != SessionEnded {
 			m.sessionState = SessionIdle
+			m.idleAt = at
 			m.bumpRev()
 		}
 		out = append(out, m.checkRunEnd(now)...)

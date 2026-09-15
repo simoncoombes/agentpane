@@ -834,3 +834,74 @@ func TestSessionState(t *testing.T) {
 		t.Fatal("not connected after SourceConnected")
 	}
 }
+
+// --- the idle hint expires when work resumes (unidle) ---
+
+// TestWorkAfterTurnEndLeavesIdle: SessionIdle comes off the transcript's
+// `turn_duration` line, which means "that turn ended", and until now only a
+// typed prompt cleared it. A background job session never types one, so after
+// its first turn it latched idle and the pane drew the §3.8 idle screen over a
+// main agent that was running a tool call every few seconds.
+func TestWorkAfterTurnEndLeavesIdle(t *testing.T) {
+	f := newFix()
+	f.apply(0, event.SessionStart, event.MainAgentID)
+	f.apply(time.Second, event.SessionIdle, event.MainAgentID)
+	if got := f.m.Snapshot().Session.State; got != SessionIdle {
+		t.Fatalf("session state = %v after turn_duration, want idle", got)
+	}
+
+	f.apply(2*time.Second, event.ToolStart, event.MainAgentID, func(e *event.Event) {
+		e.Tool, e.Target = "Bash", "go test ./..."
+	})
+	if got := f.m.Snapshot().Session.State; got != SessionActive {
+		t.Fatalf("session state = %v while main is in a Bash call, want active", got)
+	}
+
+	// And it idles again on the next turn end, so this does not simply pin
+	// the session active forever.
+	f.apply(3*time.Second, event.SessionIdle, event.MainAgentID)
+	if got := f.m.Snapshot().Session.State; got != SessionIdle {
+		t.Fatalf("session state = %v after the next turn ended, want idle", got)
+	}
+}
+
+// TestLateWorkDoesNotUndoIdle: the transcript runs seconds behind the session,
+// so a tool event stamped BEFORE the turn ended is the tail of the turn that
+// just ended, not evidence of a new one. Acting on it would flip the pane out
+// of the idle screen every time a slow file caught up.
+func TestLateWorkDoesNotUndoIdle(t *testing.T) {
+	f := newFix()
+	f.apply(0, event.SessionStart, event.MainAgentID)
+	f.apply(10*time.Second, event.SessionIdle, event.MainAgentID)
+	f.apply(4*time.Second, event.ToolStart, "a1", func(e *event.Event) {
+		e.Tool, e.Target = "Bash", "an agent file read late"
+	})
+	if got := f.m.Snapshot().Session.State; got != SessionIdle {
+		t.Fatalf("session state = %v on an event predating the turn end, want idle", got)
+	}
+}
+
+// TestIdleSurvivesNonWorkEvents: tokens and thinking are noise here. Only a
+// call, a spawn or a permission prompt says the session is working again.
+func TestIdleSurvivesNonWorkEvents(t *testing.T) {
+	f := newFix()
+	f.apply(0, event.SessionStart, event.MainAgentID)
+	f.apply(time.Second, event.SessionIdle, event.MainAgentID)
+	f.apply(2*time.Second, event.TokensUpdated, event.MainAgentID, func(e *event.Event) { e.Tokens = 10 })
+	f.apply(3*time.Second, event.ThinkingEnded, event.MainAgentID)
+	if got := f.m.Snapshot().Session.State; got != SessionIdle {
+		t.Fatalf("session state = %v after tokens and thinking alone, want idle", got)
+	}
+}
+
+// TestEndedSessionStaysEnded: SessionEnd is terminal, and a straggler tool
+// event must not resurrect it.
+func TestEndedSessionStaysEnded(t *testing.T) {
+	f := newFix()
+	f.apply(0, event.SessionStart, event.MainAgentID)
+	f.apply(time.Second, event.SessionEnd, event.MainAgentID)
+	f.apply(2*time.Second, event.ToolStart, event.MainAgentID, func(e *event.Event) { e.Tool = "Bash" })
+	if got := f.m.Snapshot().Session.State; got != SessionEnded {
+		t.Fatalf("session state = %v after a straggler call, want ended", got)
+	}
+}
