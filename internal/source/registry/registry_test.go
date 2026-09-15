@@ -252,6 +252,13 @@ func TestSessionFilterKeepsTransportEvents(t *testing.T) {
 		t.Skip("cannot make the directory unreadable here")
 	}
 	defer os.Chmod(dir, 0o755) //nolint:errcheck // test cleanup
+	// Chmod SUCCEEDING is not the same as the directory becoming unreadable:
+	// on Windows it only toggles the read-only attribute and the read below
+	// would go right through, so the transport failure this test is about
+	// never happens. Check the effect, not the call.
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("the directory is still readable after chmod 000; no transport failure to observe here")
+	}
 
 	got := s.scan()
 	if len(got) != 1 || got[0].Kind != event.SourceDisconnected {

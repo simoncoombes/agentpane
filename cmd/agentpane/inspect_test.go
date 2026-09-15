@@ -175,7 +175,9 @@ func TestInspectDiffersFromRunningBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	running := filepath.Join(dirB, "agentpane")
-	raw := settingsJSON(t, map[string]any{"hooks": allEventsHooks(dirA + "/agentpane hook")})
+	// filepath.Join, not dirA+"/agentpane": the finding is compared against a
+	// path built with Join, and on Windows the two spellings differ.
+	raw := settingsJSON(t, map[string]any{"hooks": allEventsHooks(other + " hook")})
 	fs := InspectSettings(raw, fxPath, "", running)
 	f := findLine(fs, LevelWarn, "not the running binary")
 	if f == nil {
@@ -200,7 +202,11 @@ func TestInspectDiffersFromRunningBinary(t *testing.T) {
 // current one on Stop — flagged as duplicates, and the dead path as stale.
 func TestInspectDuplicate(t *testing.T) {
 	hooks := allEventsHooks("agentpane hook")
-	hooks["Stop"] = []any{cmdGroup("/old/dead/agentpane hook"), cmdGroup("agentpane hook")}
+	// An absolute path that does not exist. Built from TempDir rather than
+	// written out, because "/old/dead/agentpane" is not absolute on Windows
+	// and the staleness check only looks at paths it can resolve.
+	dead := filepath.Join(t.TempDir(), "old", "dead", "agentpane")
+	hooks["Stop"] = []any{cmdGroup(dead + " hook"), cmdGroup("agentpane hook")}
 	raw := settingsJSON(t, map[string]any{"hooks": hooks})
 	fs := InspectSettings(raw, fxPath, "", "")
 	f := findLine(fs, LevelWarn, "duplicate agentpane entries")
@@ -208,7 +214,7 @@ func TestInspectDuplicate(t *testing.T) {
 		t.Fatalf("missing duplicate warn for Stop:\n%s", dump(fs))
 	}
 	if findLine(fs, LevelWarn, "stale agentpane path") == nil {
-		t.Fatalf("dead /old/dead path must also flag stale:\n%s", dump(fs))
+		t.Fatalf("dead path %s must also flag stale:\n%s", dead, dump(fs))
 	}
 }
 
@@ -474,7 +480,7 @@ func TestInspectAutopane(t *testing.T) {
 // fixture HOME (never the real ~/.claude) and doctor still exits 0.
 func TestDoctorCompetingSection(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setFakeHome(t, home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	dir := filepath.Join(home, ".claude")
@@ -560,7 +566,7 @@ func TestInspectDuplicateKeys(t *testing.T) {
 // ("fix the link first") instead of advising a fresh file. Fixture HOME only.
 func TestDoctorDanglingSymlink(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setFakeHome(t, home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	dir := filepath.Join(home, ".claude")
@@ -569,7 +575,9 @@ func TestDoctorDanglingSymlink(t *testing.T) {
 	}
 	target := filepath.Join(home, "fleet", "settings.json") // never created
 	if err := os.Symlink(target, filepath.Join(dir, "settings.json")); err != nil {
-		t.Fatal(err)
+		// Creating one is a privilege on Windows (Developer Mode or admin),
+		// so an unprivileged run has nothing to test rather than a failure.
+		t.Skipf("cannot create a symlink here: %v", err)
 	}
 	var out bytes.Buffer
 	if code := cmdDoctor(&out, io.Discard, nil); code != 0 {

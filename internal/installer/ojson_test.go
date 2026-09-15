@@ -44,8 +44,8 @@ print(json.dumps(json.loads(sys.stdin.read()), indent=INDENT, ensure_ascii=False
 			if err != nil {
 				t.Fatalf("python3 on %s: %v", doc, err)
 			}
-			if got != string(out) {
-				t.Errorf("indent %q, doc %s:\n go: %q\n py: %q", unit, doc, got, string(out))
+			if want := normalizeEOL(string(out)); got != want {
+				t.Errorf("indent %q, doc %s:\n go: %q\n py: %q", unit, doc, got, want)
 			}
 		}
 	}
@@ -67,6 +67,15 @@ func TestRenderKeepsNumberText(t *testing.T) {
 			t.Errorf("number was reformatted, losing %q:\n%s", want, got)
 		}
 	}
+}
+
+// normalizeEOL undoes Python's text-mode newline translation, which turns
+// every \n into \r\n on the way to stdout on Windows. It is a property of
+// print(), not of what either serializer produces — the file install.sh
+// writes is LF there too — so comparing without it would fail this parity
+// check on a difference that does not exist.
+func normalizeEOL(s string) string {
+	return strings.ReplaceAll(s, "\r\n", "\n")
 }
 
 func pyIndent(unit string) string {
